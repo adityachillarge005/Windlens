@@ -12,13 +12,14 @@ class TestAnalyticsAPIEndpoints(APITestCase):
     """Integration test suite for the REST API endpoints."""
 
     def test_health_endpoint(self):
-        """GET /api/health/ should return 200 OK and healthy status."""
-        url = reverse('api-health')
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data.get('status'), 'healthy')
-        self.assertEqual(response.data.get('app'), 'WindLens')
-        self.assertIn('data_cached', response.data)
+        """GET /api/health/, GET /, and GET /health/ should all return 200 OK and healthy status."""
+        for endpoint_name in ['api-health', 'root-health', 'base-health']:
+            url = reverse(endpoint_name)
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_200_OK, f"Failed on {endpoint_name}")
+            self.assertEqual(response.data.get('status'), 'healthy')
+            self.assertEqual(response.data.get('app'), 'WindLens')
+            self.assertIn('data_cached', response.data)
 
     def test_accuracy_summary_endpoint(self):
         """GET /api/accuracy/summary/ should return 200 OK with metrics."""

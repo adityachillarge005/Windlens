@@ -43,10 +43,15 @@ allowed_hosts_env = os.environ.get('ALLOWED_HOSTS', '').strip()
 if allowed_hosts_env:
     ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
 elif DEBUG:
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '.onrender.com']
 else:
     # Safe production default: explicit hostnames only, never wildcard '*'
-    ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'backend']
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'backend', '.onrender.com']
+
+# Render dynamically sets RENDER_EXTERNAL_HOSTNAME (e.g. windlens-4vsk.onrender.com)
+render_external_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '').strip()
+if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_external_hostname)
 
 if not DEBUG and '*' in ALLOWED_HOSTS:
     raise ImproperlyConfigured(
