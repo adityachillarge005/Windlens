@@ -71,3 +71,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+
+
+# Local evaluator notes (excluded from git repository)
+EVALUATOR_VERIFICATION_REPORT.md
