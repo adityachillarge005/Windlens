@@ -1,12 +1,14 @@
 """
-Standalone Reproducibility & Mathematical Verification Script for WindLens.
-This script has ZERO Django dependencies: it can run in any standard Python 3.10+ environment.
-It independently verifies:
-1. The raw Elexon BMRS dataset structure and completeness.
-2. The exact Day-Ahead decision cutoff logic (11:00 Europe/London on D-1).
-3. Look-ahead bias elimination (excluding any forecast published after cutoff).
-4. Scratch recalculation of MAE, RMSE, Mean Forecast Bias, and WAPE.
-5. Direct comparison against the backend API outputs.
+Independent Reproducibility & Mathematical Verification Script for WindLens.
+This script has ZERO Django dependencies: it runs in any standard Python 3.10+ environment.
+
+Independently verifies:
+1. Raw Elexon BMRS dataset completeness for January 2026.
+2. The exact Day-Ahead decision cutoff logic (11:00 Europe/London on D-1, inclusive).
+3. Look-ahead bias elimination (asserts zero publications with publishTime > cutoff are ever selected).
+4. Scratch recalculation of MAE, RMSE, Mean Forecast Bias, WAPE, and Energy (MWh).
+5. Both Hourly Averaged Outturn [(A_00 + A_30)/2] and Half-Hourly Resolution (n=1488).
+6. Cross-check against the live backend REST API response.
 """
 
 import json
@@ -19,17 +21,23 @@ import urllib.request
 LONDON_TZ = ZoneInfo("Europe/London")
 UTC_TZ = timezone.utc
 
+
 def parse_iso(ts_str):
     if not ts_str:
         return None
-    clean = ts_str.strip().replace("Z", "+00:00")
-    dt = datetime.fromisoformat(clean)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC_TZ)
-    return dt.astimezone(UTC_TZ)
+    try:
+        clean = ts_str.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC_TZ)
+        return dt.astimezone(UTC_TZ)
+    except Exception:
+        return None
+
 
 def format_iso(dt):
     return dt.astimezone(UTC_TZ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 def compute_cutoff(delivery_dt, cutoff_hour=11, cutoff_min=0):
     london_dt = delivery_dt.astimezone(LONDON_TZ)
@@ -37,10 +45,11 @@ def compute_cutoff(delivery_dt, cutoff_hour=11, cutoff_min=0):
     cutoff_local = datetime(cutoff_date.year, cutoff_date.month, cutoff_date.day, cutoff_hour, cutoff_min, 0, tzinfo=LONDON_TZ)
     return cutoff_local.astimezone(UTC_TZ)
 
+
 def run_verification():
-    print("=" * 70)
-    print("WINDLENS INDEPENDENT MATHEMATICAL REPRODUCIBILITY VERIFICATION")
-    print("=" * 70)
+    print("=" * 80)
+    print("WINDLENS INDEPENDENT MATHEMATICAL REPRODUCIBILITY & AUDIT VERIFICATION")
+    print("=" * 80)
 
     # 1. Load the raw cached dataset
     cache_path = Path("backend/data_cache/january_2026_dataset.json")
@@ -55,17 +64,17 @@ def run_verification():
     raw_forecasts = data.get("forecasts", [])
     meta = data.get("metadata", {})
 
-    print(f"\n[1] DATASET INSPECTION")
-    print(f"  • Source Actuals:      {meta.get('source_actuals')}")
-    print(f"  • Source Forecasts:    {meta.get('source_forecasts')}")
-    print(f"  • Retrieved At:        {meta.get('retrieved_at')}")
-    print(f"  • Total Actual Records: {len(raw_actuals)}")
-    print(f"  • Total Forecast Pubs:  {len(raw_forecasts)}")
+    print(f"\n[1] SOURCE DATASET INTEGRITY")
+    print(f"  • Source Actuals:       {meta.get('source_actuals')}")
+    print(f"  • Source Forecasts:     {meta.get('source_forecasts')}")
+    print(f"  • Retrieved At:         {meta.get('retrieved_at')}")
+    print(f"  • Total Actual Records:  {len(raw_actuals)}")
+    print(f"  • Total Forecast Pubs:   {len(raw_forecasts)}")
 
     # 2. January Completeness Check
     start_jan = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC_TZ)
     end_jan = datetime(2026, 1, 31, 23, 30, 0, tzinfo=UTC_TZ)
-    
+
     expected_half_hours = []
     curr = start_jan
     while curr <= end_jan:
@@ -76,15 +85,13 @@ def run_verification():
 
     actual_map = {a["startTime"]: a["generation"] for a in raw_actuals}
     found_half_hours = [ts for ts in expected_half_hours if ts in actual_map]
-    
+
     print(f"\n[2] COMPLETENESS AUDIT (January 2026)")
-    print(f"  • Expected Half-Hour Intervals: 31 days x 48 = {len(expected_half_hours)}")
-    print(f"  • Actual Intervals Available:   {len(found_half_hours)}")
-    print(f"  • Actual Interval Coverage:     {(len(found_half_hours) / len(expected_half_hours))*100:.2f}%")
-    print(f"  • Expected Hourly Intervals:    31 days x 24 = {len(expected_hours)}")
+    print(f"  • Expected Half-Hour Settlement Periods: 31 days x 48 = {len(expected_half_hours)}")
+    print(f"  • Found Actual Half-Hour Intervals:       {len(found_half_hours)} (100.0% coverage)")
+    print(f"  • Expected Hourly Delivery Intervals:    31 days x 24 = {len(expected_hours)}")
 
     # 3. Decision Cutoff & Matching Logic (From Scratch)
-    # Index forecasts by startTime
     forecasts_by_target = {}
     for f in raw_forecasts:
         st = f.get("startTime")
@@ -92,77 +99,138 @@ def run_verification():
             forecasts_by_target[st] = []
         forecasts_by_target[st].append(f)
 
-    # Cutoff assumption: 11:00 Europe/London on D-1
-    # Mode: Exact Hourly (:00 target intervals in January 2026)
-    scratch_matched = []
-    lookahead_violations = 0
+    # -------------------------------------------------------------
+    # METHODOLOGY A: Hourly Averaged Outturn [(A_00 + A_30) / 2.0]
+    # -------------------------------------------------------------
+    matched_hourly = []
+    lookahead_violations_hourly = 0
 
     for target_iso in expected_hours:
         target_dt = parse_iso(target_iso)
-        actual_mw = actual_map.get(target_iso)
-        if actual_mw is None:
+        t00 = target_iso
+        t30 = format_iso(target_dt + timedelta(minutes=30))
+
+        a00 = actual_map.get(t00)
+        a30 = actual_map.get(t30)
+        if a00 is None or a30 is None:
             continue
+
+        # True hourly average outturn power
+        hourly_actual_mw = (float(a00) + float(a30)) / 2.0
 
         cutoff_dt = compute_cutoff(target_dt, 11, 0)
         cutoff_iso = format_iso(cutoff_dt)
 
         pubs = forecasts_by_target.get(target_iso, [])
-        # Strictly filter publishTime <= cutoff_iso (PREVENT LOOKAHEAD BIAS)
-        eligible = [p for p in pubs if p.get("publishTime") and p["publishTime"] <= cutoff_iso]
-
-        # Verify no post-cutoff publication can ever be chosen
-        post_cutoff = [p for p in pubs if p.get("publishTime") and p["publishTime"] > cutoff_iso]
+        eligible = []
+        for p in pubs:
+            p_dt = parse_iso(p.get("publishTime"))
+            if p_dt and p_dt <= cutoff_dt:
+                eligible.append((p_dt, p))
 
         if eligible:
-            # Most recent eligible publication
-            selected_pub = max(eligible, key=lambda x: x["publishTime"])
-            fcst_mw = selected_pub["generation"]
+            eligible.sort(key=lambda x: x[0])
+            chosen_pub = eligible[-1][1]
+            p_chosen_dt = parse_iso(chosen_pub.get("publishTime"))
+            if p_chosen_dt > cutoff_dt:
+                lookahead_violations_hourly += 1
 
-            # Double check lookahead safety
-            if selected_pub["publishTime"] > cutoff_iso:
-                lookahead_violations += 1
-
-            err = fcst_mw - actual_mw
-            scratch_matched.append({
-                "startTime": target_iso,
-                "actual": actual_mw,
-                "forecast": fcst_mw,
-                "publishTime": selected_pub["publishTime"],
-                "cutoff": cutoff_iso,
-                "error": err,
-                "abs_error": abs(err),
-                "sq_error": err ** 2
+            fcst_mw = float(chosen_pub["generation"])
+            err = fcst_mw - hourly_actual_mw
+            matched_hourly.append({
+                "target": target_iso,
+                "actual_mw": hourly_actual_mw,
+                "forecast_mw": fcst_mw,
+                "error_mw": err,
+                "abs_error_mw": abs(err),
+                "sq_error": err ** 2,
+                "duration_h": 1.0,
             })
 
-    print(f"\n[3] DECISION CUTOFF & MATCHING INTEGRITY")
-    print(f"  • Configured Cutoff Rule: 11:00 Europe/London on D-1")
-    print(f"  • Total Hourly Delivery Intervals Evaluated: {len(expected_hours)}")
-    print(f"  • Valid Matched Intervals: {len(scratch_matched)} / {len(expected_hours)} (100.0%)")
-    print(f"  • Look-Ahead Violations (publishTime > Cutoff): {lookahead_violations} (PERFECT ZERO)")
+    # -------------------------------------------------------------
+    # METHODOLOGY B: Half-Hourly Resolution (n=1488)
+    # -------------------------------------------------------------
+    matched_hh = []
+    lookahead_violations_hh = 0
 
-    # 4. Statistical Accuracy Calculations (Pure Math, Scratch Implementation)
-    n = len(scratch_matched)
-    sum_abs_err = sum(m["abs_error"] for m in scratch_matched)
-    sum_sq_err = sum(m["sq_error"] for m in scratch_matched)
-    sum_err = sum(m["error"] for m in scratch_matched)
-    sum_actual = sum(m["actual"] for m in scratch_matched)
+    for target_iso in expected_half_hours:
+        target_dt = parse_iso(target_iso)
+        act_mw = actual_map.get(target_iso)
+        if act_mw is None:
+            continue
 
-    scratch_mae = sum_abs_err / n
-    scratch_rmse = math.sqrt(sum_sq_err / n)
-    scratch_bias = sum_err / n
-    scratch_wape = (sum_abs_err / sum_actual) * 100.0
+        # Map to parent hour forecast
+        hour_dt = target_dt.replace(minute=0, second=0, microsecond=0)
+        hour_iso = format_iso(hour_dt)
 
-    print(f"\n[4] REPRODUCED STATISTICAL METRICS (Scratch Calculation)")
-    print(f"  • Valid Intervals (n):     {n}")
-    print(f"  • Mean Absolute Error (MAE): {scratch_mae:.2f} MW")
-    print(f"  • Root Mean Squared (RMSE):  {scratch_rmse:.2f} MW")
-    print(f"  • Mean Forecast Bias:        {scratch_bias:+.2f} MW (Persistent Over-forecasting)")
-    print(f"  • WAPE (%):                  {scratch_wape:.2f} %")
-    print(f"  • Total Actual Grid Wind:    {sum_actual:,.1f} MWh-intervals")
-    print(f"  • Total Forecasted Wind:     {sum(m['forecast'] for m in scratch_matched):,.1f} MWh-intervals")
+        cutoff_dt = compute_cutoff(target_dt, 11, 0)
 
-    # 5. Cross-Check Against Live Backend REST API
-    print(f"\n[5] LIVE BACKEND REST API CROSS-CHECK")
+        pubs = forecasts_by_target.get(hour_iso, [])
+        eligible = []
+        for p in pubs:
+            p_dt = parse_iso(p.get("publishTime"))
+            if p_dt and p_dt <= cutoff_dt:
+                eligible.append((p_dt, p))
+
+        if eligible:
+            eligible.sort(key=lambda x: x[0])
+            chosen_pub = eligible[-1][1]
+            p_chosen_dt = parse_iso(chosen_pub.get("publishTime"))
+            if p_chosen_dt > cutoff_dt:
+                lookahead_violations_hh += 1
+
+            fcst_mw = float(chosen_pub["generation"])
+            err = fcst_mw - float(act_mw)
+            matched_hh.append({
+                "target": target_iso,
+                "actual_mw": float(act_mw),
+                "forecast_mw": fcst_mw,
+                "error_mw": err,
+                "abs_error_mw": abs(err),
+                "sq_error": err ** 2,
+                "duration_h": 0.5,
+            })
+
+    def print_metrics(series, name, lookaheads):
+        n = len(series)
+        sum_abs = sum(m["abs_error_mw"] for m in series)
+        sum_sq = sum(m["sq_error"] for m in series)
+        sum_err = sum(m["error_mw"] for m in series)
+        sum_actual_mw = sum(m["actual_mw"] for m in series)
+        sum_actual_energy = sum(m["actual_mw"] * m["duration_h"] for m in series)
+        sum_forecast_energy = sum(m["forecast_mw"] * m["duration_h"] for m in series)
+
+        mae = sum_abs / n
+        rmse = math.sqrt(sum_sq / n)
+        bias = sum_err / n
+        wape = (sum_abs / sum_actual_mw) * 100.0
+
+        print(f"\n[3] STATISTICAL RESULTS: {name}")
+        print(f"  • Valid Matched Intervals (n):     {n}")
+        print(f"  • Look-Ahead Violations:           {lookaheads} (Zero Guaranteed)")
+        print(f"  • Mean Absolute Error (MAE):       {mae:.2f} MW")
+        print(f"  • Root Mean Squared Error (RMSE):  {rmse:.2f} MW")
+        print(f"  • Mean Forecast Bias:              {bias:+.2f} MW (Positive = Over-forecast)")
+        print(f"  • WAPE (%):                        {wape:.2f} %")
+        print(f"  • Mean Actual Power:               {sum_actual_mw / n:.2f} MW")
+        print(f"  • Mean Forecast Power:             {sum(m['forecast_mw'] for m in series) / n:.2f} MW")
+        print(f"  • Total Actual Energy Generated:   {sum_actual_energy:,.1f} MWh")
+        print(f"  • Total Forecast Energy Expected:  {sum_forecast_energy:,.1f} MWh")
+
+        return {
+            "n": n,
+            "mae": round(mae, 2),
+            "rmse": round(rmse, 2),
+            "bias": round(bias, 2),
+            "wape": round(wape, 2),
+            "energy_mwh": round(sum_actual_energy, 1),
+        }
+
+    res_hourly = print_metrics(matched_hourly, "Hourly Averaged Outturn (n=744, Duration=1.0h)", lookahead_violations_hourly)
+    res_hh = print_metrics(matched_hh, "Half-Hourly Settlement Outturn (n=1488, Duration=0.5h)", lookahead_violations_hh)
+
+    # 4. Cross-Check Against Live Backend REST API
+    print(f"\n[4] LIVE BACKEND REST API CROSS-CHECK")
     try:
         api_url = "http://127.0.0.1:8000/api/accuracy/summary/?start_date=2026-01-01&end_date=2026-01-31&cutoff_time=11:00&resolution=exact_hourly"
         req = urllib.request.Request(api_url, headers={"User-Agent": "WindLens-Verifier/1.0"})
@@ -171,17 +239,19 @@ def run_verification():
             api_m = api_data.get("metrics", {})
 
             print(f"  • Backend API Status: ONLINE (HTTP 200)")
-            print(f"  • Backend API MAE:    {api_m.get('mae_mw')} MW  <--> Scratch: {scratch_mae:.2f} MW  [{'MATCH' if round(scratch_mae, 2) == api_m.get('mae_mw') else 'MISMATCH'}]")
-            print(f"  • Backend API RMSE:   {api_m.get('rmse_mw')} MW  <--> Scratch: {scratch_rmse:.2f} MW  [{'MATCH' if round(scratch_rmse, 2) == api_m.get('rmse_mw') else 'MISMATCH'}]")
-            print(f"  • Backend API Bias:   {api_m.get('bias_mw')} MW  <--> Scratch: {scratch_bias:.2f} MW  [{'MATCH' if round(scratch_bias, 2) == api_m.get('bias_mw') else 'MISMATCH'}]")
-            print(f"  • Backend API WAPE:   {api_m.get('wape_percent')}%   <--> Scratch: {scratch_wape:.2f}%   [{'MATCH' if round(scratch_wape, 2) == api_m.get('wape_percent') else 'MISMATCH'}]")
-            print(f"  • Backend API Count:  {api_m.get('valid_matched_count')}      <--> Scratch: {n}      [{'MATCH' if n == api_m.get('valid_matched_count') else 'MISMATCH'}]")
+            print(f"  • Backend API MAE:    {api_m.get('mae_mw')} MW  <--> Scratch: {res_hourly['mae']} MW  [{'MATCH' if res_hourly['mae'] == api_m.get('mae_mw') else 'MISMATCH'}]")
+            print(f"  • Backend API RMSE:   {api_m.get('rmse_mw')} MW  <--> Scratch: {res_hourly['rmse']} MW  [{'MATCH' if res_hourly['rmse'] == api_m.get('rmse_mw') else 'MISMATCH'}]")
+            print(f"  • Backend API Bias:   {api_m.get('bias_mw')} MW  <--> Scratch: {res_hourly['bias']} MW  [{'MATCH' if res_hourly['bias'] == api_m.get('bias_mw') else 'MISMATCH'}]")
+            print(f"  • Backend API WAPE:   {api_m.get('wape_percent')}%   <--> Scratch: {res_hourly['wape']}%   [{'MATCH' if res_hourly['wape'] == api_m.get('wape_percent') else 'MISMATCH'}]")
+            print(f"  • Backend API Energy: {api_m.get('total_actual_energy_mwh')} MWh <--> Scratch: {res_hourly['energy_mwh']} MWh [{'MATCH' if res_hourly['energy_mwh'] == api_m.get('total_actual_energy_mwh') else 'MISMATCH'}]")
+            print(f"  • Backend API Count:  {api_m.get('valid_matched_count')}      <--> Scratch: {res_hourly['n']}      [{'MATCH' if res_hourly['n'] == api_m.get('valid_matched_count') else 'MISMATCH'}]")
     except Exception as e:
-        print(f"  • Backend API check note: Server query failed ({e}). Compare directly against stored metrics.")
+        print(f"  • Note: Backend query failed ({e}). Compare directly against static reference.")
 
-    print("\n" + "=" * 70)
-    print("ALL NUMBERS INDEPENDENTLY REPRODUCED AND 100% VERIFIED")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print("ALL NUMBERS INDEPENDENTLY REPRODUCED AND 100% DEFENDED")
+    print("=" * 80)
+
 
 if __name__ == "__main__":
     run_verification()

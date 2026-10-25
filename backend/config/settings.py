@@ -1,18 +1,41 @@
 """
 Django settings for WindLens project.
+Production-ready configuration with strict separation between development and production modes.
 """
 
 import os
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'windlens-insecure-dev-key-change-in-production-2026')
-
+# DEBUG mode: default to True for local development, but in production (DEBUG=False)
+# strict security checks are enforced.
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-allowed_hosts_str = os.environ.get('ALLOWED_HOSTS', '*')
-ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_str.split(',') if h.strip()]
+# SECRET_KEY: In production (DEBUG=False), require an explicit non-trivial secret key.
+# In local development (DEBUG=True), allow a safe development fallback.
+_dev_fallback_key = 'windlens-insecure-dev-key-change-in-production-2026'
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = _dev_fallback_key
+    else:
+        raise ImproperlyConfigured(
+            "CRITICAL: The SECRET_KEY environment variable must be set when running in production (DEBUG=False)."
+        )
+
+# ALLOWED_HOSTS: In development, allow localhost/127.0.0.1.
+# In production, parse explicit hostnames from the ALLOWED_HOSTS environment variable.
+allowed_hosts_env = os.environ.get('ALLOWED_HOSTS', '')
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
+elif DEBUG:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+else:
+    # Safe production default: do not allow wildcard '*' by default
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -82,11 +105,25 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS configuration
-CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 'yes')
+# CORS configuration:
+# In development (DEBUG=True), allow all origins for local convenience.
+# In production (DEBUG=False), enforce explicit CORS_ALLOWED_ORIGINS.
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 'yes')
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+
 cors_origins_env = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins_env:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in cors_origins_env.split(',') if o.strip()]
+elif not CORS_ALLOW_ALL_ORIGINS:
+    # Default local ports if origins not explicitly specified
+    CORS_ALLOWED_ORIGINS = [
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ]
 
 # REST Framework settings
 REST_FRAMEWORK = {

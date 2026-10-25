@@ -12,7 +12,7 @@ class QueryParamsSerializer(serializers.Serializer):
     end_date = serializers.CharField(required=False, default="2026-01-31")
     cutoff_time = serializers.CharField(required=False, default="11:00")
     resolution = serializers.ChoiceField(
-        choices=["exact_hourly", "half_hourly_mapped"],
+        choices=["exact_hourly", "hourly_averaged", "half_hourly_mapped"],
         default="exact_hourly",
         required=False
     )
@@ -42,6 +42,7 @@ class AccuracyMetricUnitsSerializer(serializers.Serializer):
     bias = serializers.CharField()
     wape = serializers.CharField()
     generation = serializers.CharField()
+    energy = serializers.CharField(required=False)
 
 
 class AccuracySummaryResponseSerializer(serializers.Serializer):
@@ -53,6 +54,8 @@ class AccuracySummaryResponseSerializer(serializers.Serializer):
     wape_percent = serializers.FloatField(allow_null=True)
     mean_actual_mw = serializers.FloatField(allow_null=True)
     mean_forecast_mw = serializers.FloatField(allow_null=True)
+    total_actual_energy_mwh = serializers.FloatField(allow_null=True, required=False)
+    total_forecast_energy_mwh = serializers.FloatField(allow_null=True, required=False)
     total_actual_mw = serializers.FloatField(allow_null=True)
     total_forecast_mw = serializers.FloatField(allow_null=True)
     max_overforecast_mw = serializers.FloatField(allow_null=True)

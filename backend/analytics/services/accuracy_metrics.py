@@ -1,7 +1,7 @@
 """
 Accuracy metrics calculation engine for WindLens.
 Computes MAE, RMSE, Mean Forecast Bias, WAPE, error distributions,
-top forecast misses, and daily summaries with zero-denominator safety.
+energy volume totals (MWh), top forecast misses, and daily summaries with zero-denominator safety.
 """
 
 import math
@@ -17,6 +17,12 @@ class AccuracyCalculator:
         """
         Calculate overall summary accuracy metrics for valid matched intervals.
         Handles zero denominators explicitly.
+        
+        Units and Quantities:
+        - MAE, RMSE, Bias: Megawatts (MW) [Power]
+        - WAPE: Percentage (%) [Ratio of total absolute error to total actual generation]
+        - Mean Generation: Megawatts (MW) [Average active power]
+        - Total Energy: Megawatt-hours (MWh) [Energy = Power (MW) x Duration (hours)]
         """
         valid_items = [
             m for m in matched_series
@@ -33,6 +39,8 @@ class AccuracyCalculator:
                 'wape_percent': None,
                 'mean_actual_mw': None,
                 'mean_forecast_mw': None,
+                'total_actual_energy_mwh': None,
+                'total_forecast_energy_mwh': None,
                 'total_actual_mw': None,
                 'total_forecast_mw': None,
                 'max_overforecast_mw': None,
@@ -43,26 +51,33 @@ class AccuracyCalculator:
         actuals = np.array([float(m['actual']) for m in valid_items], dtype=np.float64)
         forecasts = np.array([float(m['decision_forecast']) for m in valid_items], dtype=np.float64)
 
+        # Durations in hours (defaults to 1.0 if not specified, 0.5 for half-hourly)
+        durations = np.array([float(m.get('interval_duration_hours', 1.0)) for m in valid_items], dtype=np.float64)
+
         errors = forecasts - actuals
         abs_errors = np.abs(errors)
 
-        # MAE = sum(|F - A|) / n
+        # MAE = sum(|F - A|) / n (MW)
         mae = float(np.mean(abs_errors))
 
-        # RMSE = sqrt(sum((F - A)^2) / n)
+        # RMSE = sqrt(sum((F - A)^2) / n) (MW)
         rmse = float(np.sqrt(np.mean(errors ** 2)))
 
-        # Bias = sum(F - A) / n
+        # Mean Forecast Bias = sum(F - A) / n (MW)
         bias = float(np.mean(errors))
 
-        # WAPE = 100 * sum(|F - A|) / sum(|A|)
+        # WAPE = 100 * sum(|F - A|) / sum(|A|) (%)
         sum_actuals = float(np.sum(np.abs(actuals)))
         if sum_actuals > 0:
             wape = float((np.sum(abs_errors) / sum_actuals) * 100.0)
         else:
-            wape = None  # Undefined denominator
+            wape = None  # Undefined denominator: sum of actuals is zero
 
-        # Also calculate metrics for latest forecast if available for comparison
+        # Physical Energy Volume: Energy (MWh) = Power (MW) * Duration (hours)
+        total_actual_energy_mwh = float(np.sum(actuals * durations))
+        total_forecast_energy_mwh = float(np.sum(forecasts * durations))
+
+        # Metrics for latest available gate forecast (for comparison)
         latest_valid = [
             m for m in matched_series
             if m.get('actual') is not None and m.get('latest_forecast') is not None
@@ -88,6 +103,8 @@ class AccuracyCalculator:
             'wape_percent': round(wape, 2) if wape is not None else None,
             'mean_actual_mw': round(float(np.mean(actuals)), 2),
             'mean_forecast_mw': round(float(np.mean(forecasts)), 2),
+            'total_actual_energy_mwh': round(total_actual_energy_mwh, 1),
+            'total_forecast_energy_mwh': round(total_forecast_energy_mwh, 1),
             'total_actual_mw': round(float(np.sum(actuals)), 2),
             'total_forecast_mw': round(float(np.sum(forecasts)), 2),
             'max_overforecast_mw': round(float(np.max(errors)), 2),
@@ -104,6 +121,7 @@ class AccuracyCalculator:
                 'bias': 'MW',
                 'wape': '%',
                 'generation': 'MW',
+                'energy': 'MWh',
             }
         }
 
@@ -148,6 +166,7 @@ class AccuracyCalculator:
             items = by_date[day_str]
             acts = np.array([float(x['actual']) for x in items])
             fcsts = np.array([float(x['decision_forecast']) for x in items])
+            durs = np.array([float(x.get('interval_duration_hours', 1.0)) for x in items])
             errs = fcsts - acts
             abs_errs = np.abs(errs)
 
@@ -163,6 +182,8 @@ class AccuracyCalculator:
                 'wape_percent': round(wape, 2) if wape is not None else None,
                 'actual_avg_mw': round(float(np.mean(acts)), 2),
                 'forecast_avg_mw': round(float(np.mean(fcsts)), 2),
+                'actual_energy_mwh': round(float(np.sum(acts * durs)), 1),
+                'forecast_energy_mwh': round(float(np.sum(fcsts * durs)), 1),
             })
 
         return daily_results

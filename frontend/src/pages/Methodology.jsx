@@ -174,19 +174,50 @@ export default function Methodology() {
 
         <div className="space-y-4 text-xs">
           <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
-            <h4 className="font-semibold text-slate-200 mb-2">1. Day-Ahead Decision Cutoff Logic</h4>
+            <h4 className="font-semibold text-slate-200 mb-2">1. Day-Ahead Decision Cutoff vs BSC Gate Closure</h4>
             <p className="text-slate-400 leading-relaxed">
-              In Great Britain, wholesale day-ahead power is traded in discrete daily auctions (EPEX SPOT and Nord Pool). The auction gate closure occurs on <strong>D-1</strong> (the day before delivery D). Our application enforces:
+              In Great Britain wholesale electricity markets, the primary day-ahead wholesale power auctions (EPEX SPOT and Nord Pool) close their order books at <strong>11:00 London time on D-1</strong> (the day before delivery D). In contrast, statutory Elexon Balancing Mechanism Gate Closure occurs <strong>1 hour before delivery</strong>. WindLens models the procurement team's decision point using a configurable cutoff (defaulting to 11:00 D-1 London time):
               <br />
               <code className="block my-2 p-2 rounded bg-slate-900 font-mono text-sky-300">
                 Decision_Cutoff(Delivery_Interval) = (Delivery_Date_in_London − 1 Day) at [Cutoff_Time] Europe/London
               </code>
-              To evaluate historical performance, forecasts published after this cutoff are strictly excluded from the decision-time metric calculations.
+              To evaluate historical accuracy without look-ahead bias, forecasts published after this cutoff timestamp are strictly excluded from decision-time metrics.
             </p>
           </div>
 
           <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
-            <h4 className="font-semibold text-slate-200 mb-2">2. Accuracy Metrics Formulations</h4>
+            <h4 className="font-semibold text-slate-200 mb-2">2. Hourly Outturn Aggregation &amp; Energy (MWh) Accounting</h4>
+            <p className="text-slate-400 leading-relaxed mb-3">
+              Elexon <code>FUELHH</code> records represent average power in <strong>Megawatts (MW)</strong> for each 30-minute settlement period. Elexon <code>WINDFOR</code> forecasts represent average power in MW over 1-hour intervals. WindLens provides two rigorously defined comparison methodologies:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-slate-300">
+              <div className="p-2.5 rounded bg-slate-900 border border-slate-800/80">
+                <span className="font-semibold text-sky-400 block mb-1">Hourly Averaged Outturn (Default)</span>
+                <span className="font-mono text-xs text-sky-300 block mb-1">Actual_Hour = (Actual_:00 + Actual_:30) / 2.0</span>
+                <p className="text-[11px] text-slate-400">
+                  Matches each 1-hour forecast against the mean power of both constituent 30-min settlement periods (744 hours evaluated; 100% complete in January 2026).
+                </p>
+              </div>
+              <div className="p-2.5 rounded bg-slate-900 border border-slate-800/80">
+                <span className="font-semibold text-amber-400 block mb-1">Half-Hourly Settlement Mapped</span>
+                <span className="font-mono text-xs text-amber-300 block mb-1">Fcst_:00 = Fcst_Hour ; Fcst_:30 = Fcst_Hour</span>
+                <p className="text-[11px] text-slate-400">
+                  Maps the 1-hour forecast across both half-hour settlement periods to evaluate directly against official settlement intervals (1,488 periods evaluated).
+                </p>
+              </div>
+            </div>
+            <p className="text-slate-400 leading-relaxed mt-3">
+              <strong>Energy Conversion (MWh):</strong> MW represents instantaneous power, whereas volume is measured in Megawatt-hours (MWh). Energy is computed as:
+              <br />
+              <code className="block my-1.5 p-2 rounded bg-slate-900 font-mono text-emerald-400">
+                Total_Energy_MWh = Σ ( Generation_MWᵢ × Duration_Hoursᵢ )
+              </code>
+              where Duration = 1.0 h for hourly intervals and 0.5 h for half-hourly intervals. Both methods yield an identical January 2026 actual volume of <strong>8,616,068.5 MWh</strong>.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
+            <h4 className="font-semibold text-slate-200 mb-2">3. Accuracy Metrics Formulations</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 text-slate-300">
               <div className="p-2.5 rounded bg-slate-900 border border-slate-800/80">
                 <span className="font-semibold text-sky-400 block mb-1">Mean Absolute Error (MAE)</span>
@@ -218,7 +249,7 @@ export default function Methodology() {
           </div>
 
           <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
-            <h4 className="font-semibold text-slate-200 mb-2">3. Timezone &amp; Boundary Handling</h4>
+            <h4 className="font-semibold text-slate-200 mb-2">4. Timezone &amp; Boundary Handling</h4>
             <p className="text-slate-400 leading-relaxed">
               Timestamps are parsed and normalized to UTC while respecting <code className="text-sky-300">Europe/London</code> clock rules. In January, London observes Greenwich Mean Time (GMT, UTC+0). During summer, British Summer Time (BST, UTC+1) transitions are natively supported by the underlying timezone engine.
             </p>

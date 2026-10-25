@@ -3,10 +3,20 @@
  * Communicates with the Django REST Framework backend.
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+// In local development, default to local Django port 8000.
+// In containerized/cloud deployments, default to relative '/api' proxy or VITE_API_BASE_URL.
+const rawBase = import.meta.env.VITE_API_BASE_URL || 
+  (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://127.0.0.1:8000/api'
+    : '/api');
+
+const API_BASE = rawBase.replace(/\/+$/, '');
 
 async function request(endpoint, params = {}) {
-  const url = new URL(`${API_BASE}${endpoint}`, window.location.origin);
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const fullUrl = `${API_BASE}${cleanEndpoint}`;
+  const url = new URL(fullUrl, window.location.origin);
+
   Object.entries(params).forEach(([key, val]) => {
     if (val !== undefined && val !== null && val !== '') {
       url.searchParams.append(key, val);
@@ -38,15 +48,10 @@ async function request(endpoint, params = {}) {
 
 export const api = {
   getHealth: () => request('/health/'),
-  
   getForecastLatest: (params = {}) => request('/forecast/latest/', params),
-  
   getAccuracySummary: (params = {}) => request('/accuracy/summary/', params),
-  
   getAccuracySeries: (params = {}) => request('/accuracy/series/', params),
-  
   getForecastHistory: (startTime, cutoffTime = '11:00') => 
     request('/forecast/history/', { start_time: startTime, cutoff_time: cutoffTime }),
-    
   getDataQuality: () => request('/data-quality/'),
 };

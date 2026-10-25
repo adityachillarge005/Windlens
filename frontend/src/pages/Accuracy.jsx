@@ -180,6 +180,52 @@ export default function Accuracy({
         />
       </div>
 
+      {/* Energy & Volume Distinction Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3.5 flex items-center justify-between">
+          <div>
+            <span className="text-[11px] text-slate-500 uppercase tracking-wider block">Total Actual Energy</span>
+            <span className="text-base font-bold font-mono text-emerald-400">
+              {metrics.total_actual_energy_mwh ? Number(metrics.total_actual_energy_mwh).toLocaleString() : '—'} MWh
+            </span>
+            <span className="text-[10px] text-slate-500 block">Metered Outturn Volume</span>
+          </div>
+          <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-1 rounded">
+            {metrics.resolution === 'exact_hourly' ? '1.0h periods' : '0.5h periods'}
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3.5 flex items-center justify-between">
+          <div>
+            <span className="text-[11px] text-slate-500 uppercase tracking-wider block">Total Forecast Energy</span>
+            <span className="text-base font-bold font-mono text-sky-400">
+              {metrics.total_forecast_energy_mwh ? Number(metrics.total_forecast_energy_mwh).toLocaleString() : '—'} MWh
+            </span>
+            <span className="text-[10px] text-slate-500 block">Day-Ahead Expected Volume</span>
+          </div>
+          <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-1 rounded">
+            Cutoff {cutoffTime} D-1
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3.5 flex items-center justify-between">
+          <div>
+            <span className="text-[11px] text-slate-500 uppercase tracking-wider block">Energy Net Imbalance</span>
+            <span className={`text-base font-bold font-mono ${
+              (metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh) > 0 ? 'text-amber-400' : 'text-sky-400'
+            }`}>
+              {metrics.total_forecast_energy_mwh && metrics.total_actual_energy_mwh
+                ? `${((metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh) > 0 ? '+' : '')}${Number((metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh).toFixed(1)).toLocaleString()} MWh`
+                : '—'}
+            </span>
+            <span className="text-[10px] text-slate-500 block">MWh = MW × duration_hours</span>
+          </div>
+          <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-1 rounded">
+            {metrics.matched_intervals || 0} intervals
+          </span>
+        </div>
+      </div>
+
       {/* Procurement Impact Callout */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
         <div className="flex items-start gap-3">
@@ -187,7 +233,7 @@ export default function Accuracy({
           <div className="space-y-1">
             <span className="font-semibold text-slate-200">Procurement Context for UK Day-Ahead Decisions:</span>
             <p className="text-slate-400">
-              In the UK wholesale market, the Day-Ahead auction price sets the baseline purchase. Over-forecasting (+ Bias of {metrics.bias_mw || 0} MW) means the utility contracts excess wind power day-ahead and must spill or resell it at intraday/cash-out prices. Conversely, under-forecasting exposes the portfolio to expensive replacement purchases in the Balancing Mechanism.
+              In the UK wholesale market, wholesale day-ahead procurement decisions commit volumes ahead of delivery. An aggregate over-forecast (+{metrics.bias_mw || 0} MW bias) indicates that day-ahead forecasts persistently exceeded outturn, resulting in a contracted long volume position subject to intraday re-trading or system cash-out. Conversely, an under-forecast creates short positions requiring replacement power in the Balancing Mechanism. Note that portfolio commercial impact depends on market price spreads and balancing cash-out prices.
             </p>
           </div>
         </div>

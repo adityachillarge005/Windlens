@@ -80,10 +80,10 @@ export default function App() {
                   value={cutoffTime}
                   onChange={(e) => setCutoffTime(e.target.value)}
                   className="bg-transparent text-slate-200 font-medium focus:outline-none cursor-pointer"
-                  title="Day-ahead auction gate closure cutoff (D-1 Europe/London)"
+                  title="Configurable day-ahead wholesale procurement decision cutoff (D-1 Europe/London)"
                 >
-                  <option value="11:00" className="bg-slate-900">11:00 D-1 (EPEX SPOT Default)</option>
-                  <option value="12:00" className="bg-slate-900">12:00 D-1 (Nord Pool Gate)</option>
+                  <option value="11:00" className="bg-slate-900">11:00 D-1 (Auction Default)</option>
+                  <option value="12:00" className="bg-slate-900">12:00 D-1 (Midday Gate)</option>
                   <option value="14:00" className="bg-slate-900">14:00 D-1 (Afternoon)</option>
                   <option value="17:00" className="bg-slate-900">17:00 D-1 (Evening Gate)</option>
                 </select>
@@ -96,9 +96,10 @@ export default function App() {
                   value={resolution}
                   onChange={(e) => setResolution(e.target.value)}
                   className="bg-transparent text-slate-200 font-medium focus:outline-none cursor-pointer"
+                  title="Evaluation methodology: Hourly averaged outturn (744 intervals) vs half-hourly settlement periods (1,488 intervals)"
                 >
-                  <option value="exact_hourly" className="bg-slate-900">Exact Hourly (744 periods)</option>
-                  <option value="half_hourly_mapped" className="bg-slate-900">Half-Hour Mapped (1,488)</option>
+                  <option value="exact_hourly" className="bg-slate-900">Hourly Averaged (744 periods)</option>
+                  <option value="half_hourly_mapped" className="bg-slate-900">Half-Hourly Settlement (1,488)</option>
                 </select>
               </div>
 
@@ -110,7 +111,9 @@ export default function App() {
                   }`}
                 />
                 <span className="text-slate-400 hidden sm:inline">
-                  {healthStatus.connected ? 'API Live (Jan 2026)' : 'API Disconnected'}
+                  {healthStatus.connected
+                    ? (healthStatus.data?.data_cached ? 'Elexon Cache Active (Jan 2026)' : 'API Live')
+                    : 'API Disconnected'}
                 </span>
               </div>
             </div>
@@ -273,7 +276,7 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950 py-4 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>WindLens v1.0.0 — Production-grade UK Wind Forecast Analytics for Wholesale Energy Trading</span>
+          <span>WindLens v1.1.0 — UK Wind Forecast Analytics for Wholesale Energy Trading</span>
           <span>Data Source: Elexon BMRS Open API v1 (FUELHH &amp; WINDFOR)</span>
         </div>
       </footer>

@@ -23,11 +23,12 @@ class TestAccuracyMetrics(unittest.TestCase):
         Sum Sq = 2900 -> RMSE = sqrt(2900 / 3) = sqrt(966.6667) = 31.09 MW
         Sum Error = -30 -> Bias = -30 / 3 = -10.0 MW
         Sum Actual = 400 -> WAPE = 100 * (70 / 400) = 17.5 %
+        Duration = 1.0 h each -> Total Actual Energy = 400.0 MWh
         """
         synthetic_series = [
-            {'startTime': '2026-01-01T00:00:00Z', 'actual': 80.0, 'decision_forecast': 100.0, 'error': 20.0, 'abs_error': 20.0},
-            {'startTime': '2026-01-01T01:00:00Z', 'actual': 200.0, 'decision_forecast': 150.0, 'error': -50.0, 'abs_error': 50.0},
-            {'startTime': '2026-01-01T02:00:00Z', 'actual': 120.0, 'decision_forecast': 120.0, 'error': 0.0, 'abs_error': 0.0},
+            {'startTime': '2026-01-01T00:00:00Z', 'actual': 80.0, 'decision_forecast': 100.0, 'interval_duration_hours': 1.0, 'error': 20.0, 'abs_error': 20.0},
+            {'startTime': '2026-01-01T01:00:00Z', 'actual': 200.0, 'decision_forecast': 150.0, 'interval_duration_hours': 1.0, 'error': -50.0, 'abs_error': 50.0},
+            {'startTime': '2026-01-01T02:00:00Z', 'actual': 120.0, 'decision_forecast': 120.0, 'interval_duration_hours': 1.0, 'error': 0.0, 'abs_error': 0.0},
         ]
 
         metrics = AccuracyCalculator.calculate_summary_metrics(synthetic_series)
@@ -39,6 +40,23 @@ class TestAccuracyMetrics(unittest.TestCase):
         self.assertAlmostEqual(metrics['wape_percent'], 17.50, places=2)
         self.assertEqual(metrics['max_overforecast_mw'], 20.0)
         self.assertEqual(metrics['max_underforecast_mw'], -50.0)
+        self.assertEqual(metrics['total_actual_energy_mwh'], 400.0)
+        self.assertEqual(metrics['total_forecast_energy_mwh'], 370.0)
+
+    def test_energy_conversion_with_half_hour_duration(self):
+        """
+        Synthetic test: For half-hour intervals (duration = 0.5h),
+        Energy (MWh) = Power (MW) * 0.5h.
+        """
+        synthetic_half_hours = [
+            {'startTime': '2026-01-01T00:00:00Z', 'actual': 1000.0, 'decision_forecast': 1000.0, 'interval_duration_hours': 0.5},
+            {'startTime': '2026-01-01T00:30:00Z', 'actual': 1200.0, 'decision_forecast': 1200.0, 'interval_duration_hours': 0.5},
+        ]
+
+        metrics = AccuracyCalculator.calculate_summary_metrics(synthetic_half_hours)
+        # Power sum = 2200 MW, but Energy = 1000*0.5 + 1200*0.5 = 1100.0 MWh!
+        self.assertEqual(metrics['total_actual_energy_mwh'], 1100.0)
+        self.assertEqual(metrics['total_actual_mw'], 2200.0)
 
     def test_zero_denominator_empty_series(self):
         """Synthetic test: When no valid intervals exist, return None instead of division by zero."""
@@ -53,6 +71,7 @@ class TestAccuracyMetrics(unittest.TestCase):
         self.assertIsNone(metrics['rmse_mw'])
         self.assertIsNone(metrics['bias_mw'])
         self.assertIsNone(metrics['wape_percent'])
+        self.assertIsNone(metrics['total_actual_energy_mwh'])
 
     def test_zero_actual_generation_denominator(self):
         """Synthetic test: When total actual generation is zero, WAPE denominator is 0."""

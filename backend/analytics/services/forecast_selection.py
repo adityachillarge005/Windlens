@@ -1,7 +1,7 @@
 """
 Forecast selection engine for WindLens.
 Implements the historical day-ahead procurement decision cutoff logic,
-look-ahead bias prevention, forecast revision tracking, and forecast/actual matching.
+strict look-ahead bias prevention, forecast revision tracking, and outturn matching.
 """
 
 import logging
@@ -12,31 +12,33 @@ from .data_processing import parse_iso_timestamp, format_iso_utc, LONDON_TZ, UTC
 
 logger = logging.getLogger(__name__)
 
-# Default Day-Ahead auction gate closure assumption in the UK wholesale market:
-# 11:00 Europe/London on D-1 (EPEX SPOT GB Day-Ahead auction gate closure).
+# Default Day-Ahead wholesale procurement decision cutoff assumption:
+# 11:00 Europe/London on D-1 (reflects the typical GB wholesale Day-Ahead auction order book deadline,
+# such as EPEX SPOT GB Day-Ahead 60-minute auction).
+# Note: This is a configurable analytical assumption, distinct from the BSC Balancing Mechanism Gate Closure
+# which occurs 1 hour prior to each half-hour delivery interval.
 DEFAULT_CUTOFF_TIME_STR = "11:00"
 
 
 def compute_day_ahead_cutoff(delivery_dt: datetime, cutoff_time_str: str = DEFAULT_CUTOFF_TIME_STR) -> datetime:
     """
-    Calculate the day-ahead procurement decision cutoff for a given delivery datetime.
+    Calculate the day-ahead procurement decision cutoff datetime for a given delivery datetime.
     
     Rule:
-    1. Determine delivery date D in Europe/London timezone.
-    2. Cutoff date is D - 1 day.
+    1. Determine target delivery date D in Europe/London timezone.
+    2. Cutoff calendar date is D - 1 day.
     3. Cutoff time is parsed from cutoff_time_str (e.g. '11:00' -> 11:00:00 Europe/London).
-    4. Convert cutoff to UTC datetime.
+    4. Convert cutoff to a timezone-aware UTC datetime.
     
-    Example:
-    Delivery: 2026-01-05 14:00:00 UTC -> Delivery Day in London: 2026-01-05
-    Cutoff Date: 2026-01-04
-    Cutoff in London: 2026-01-04 11:00:00 Europe/London
-    Cutoff in UTC: 2026-01-04 11:00:00 UTC (January is GMT, UTC+0)
+    Eligibility Rule:
+    Forecasts published at or before this cutoff (publishTime <= cutoff) are eligible.
+    Any forecast published strictly after this cutoff (publishTime > cutoff) is excluded
+    to prevent look-ahead bias.
     """
     if delivery_dt.tzinfo is None:
         delivery_dt = delivery_dt.replace(tzinfo=UTC_TZ)
 
-    # Convert delivery datetime to Europe/London to get local calendar date
+    # Convert delivery datetime to Europe/London to determine the local calendar delivery date
     london_delivery = delivery_dt.astimezone(LONDON_TZ)
     delivery_date = london_delivery.date()
     cutoff_date = delivery_date - timedelta(days=1)
@@ -61,7 +63,7 @@ def compute_day_ahead_cutoff(delivery_dt: datetime, cutoff_time_str: str = DEFAU
 
 
 class ForecastSelector:
-    """Selects eligible forecasts based on decision cutoffs and matches to actuals."""
+    """Selects eligible forecasts based on decision cutoffs and matches to outturn actuals."""
 
     def __init__(self, cutoff_time_str: str = DEFAULT_CUTOFF_TIME_STR):
         self.cutoff_time_str = cutoff_time_str
@@ -74,7 +76,8 @@ class ForecastSelector:
         
         target_clean = format_iso_utc(target_dt)
         pubs = [f for f in all_forecasts if f.get('startTime') == target_clean]
-        pubs.sort(key=lambda x: x['publishTime'])
+        # Sort chronologically by parsed datetime
+        pubs.sort(key=lambda x: parse_iso_timestamp(x.get('publishTime')) or datetime.min.replace(tzinfo=UTC_TZ))
         return pubs
 
     def select_forecast_at_cutoff(
@@ -85,20 +88,41 @@ class ForecastSelector:
     ) -> Optional[Dict]:
         """
         Select the latest forecast published at or before the decision cutoff.
+        
         STRICT LOOK-AHEAD BIAS PREVENTION:
-        Only publications with publishTime <= cutoff_dt are eligible.
-        Returns the publication with the maximum publishTime among eligible, or None.
+        - Only publications with parsed publishTime <= cutoff_dt are eligible (inclusive at cutoff).
+        - Any publication with publishTime > cutoff_dt is strictly excluded.
+        - Missing or invalid publication timestamps are excluded.
+        - If no eligible publication exists, returns None.
         """
-        cutoff_iso = format_iso_utc(cutoff_dt)
-        eligible = [
-            p for p in publications
-            if p.get('publishTime') and p['publishTime'] <= cutoff_iso
-        ]
+        if cutoff_dt.tzinfo is None:
+            cutoff_dt = cutoff_dt.replace(tzinfo=UTC_TZ)
+        else:
+            cutoff_dt = cutoff_dt.astimezone(UTC_TZ)
+
+        eligible = []
+        for p in publications:
+            raw_pub = p.get('publishTime')
+            if not raw_pub:
+                continue
+            pub_dt = parse_iso_timestamp(raw_pub)
+            if pub_dt is None:
+                continue
+            # Ensure timezone awareness
+            if pub_dt.tzinfo is None:
+                pub_dt = pub_dt.replace(tzinfo=UTC_TZ)
+            else:
+                pub_dt = pub_dt.astimezone(UTC_TZ)
+
+            if pub_dt <= cutoff_dt:
+                eligible.append((pub_dt, p))
+
         if not eligible:
             return None
 
-        # Return the most recent eligible publication
-        return max(eligible, key=lambda x: x['publishTime'])
+        # Return the publication with the maximum valid publication datetime
+        eligible.sort(key=lambda item: item[0])
+        return eligible[-1][1]
 
     def select_latest_forecast(
         self,
@@ -106,17 +130,41 @@ class ForecastSelector:
         publications: List[Dict]
     ) -> Optional[Dict]:
         """
-        Select the latest currently available forecast for the interval,
-        published prior to delivery (publishTime <= target_dt) or overall latest.
+        Select the latest forecast published prior to delivery (publishTime <= target_dt).
+        
+        LOOK-AHEAD DEFENSE:
+        - Must NEVER return a forecast published after delivery.
+        - If no publication exists prior to or at delivery, returns None.
+        - No future forecast fallback is permitted.
         """
-        target_iso = format_iso_utc(target_dt)
-        # In wholesale trading, latest available before delivery is the final gate forecast
-        eligible = [p for p in publications if p.get('publishTime') and p['publishTime'] <= target_iso]
-        if eligible:
-            return max(eligible, key=lambda x: x['publishTime'])
-        if publications:
-            return max(publications, key=lambda x: x['publishTime'])
-        return None
+        if target_dt.tzinfo is None:
+            target_dt = target_dt.replace(tzinfo=UTC_TZ)
+        else:
+            target_dt = target_dt.astimezone(UTC_TZ)
+
+        eligible = []
+        for p in publications:
+            raw_pub = p.get('publishTime')
+            if not raw_pub:
+                continue
+            pub_dt = parse_iso_timestamp(raw_pub)
+            if pub_dt is None:
+                continue
+            if pub_dt.tzinfo is None:
+                pub_dt = pub_dt.replace(tzinfo=UTC_TZ)
+            else:
+                pub_dt = pub_dt.astimezone(UTC_TZ)
+
+            # Strictly require publishTime <= target_dt
+            if pub_dt <= target_dt:
+                eligible.append((pub_dt, p))
+
+        if not eligible:
+            return None
+
+        # Return the most recent publication prior to delivery
+        eligible.sort(key=lambda item: item[0])
+        return eligible[-1][1]
 
     def match_forecasts_and_actuals(
         self,
@@ -128,22 +176,23 @@ class ForecastSelector:
         """
         Match actuals and forecasts for all delivery intervals.
         
-        Parameters:
-        - actuals: List of FUELHH actual records (WIND)
-        - forecasts: List of WINDFOR forecast records
-        - cutoff_time_str: Day-ahead cutoff time (e.g. '11:00')
-        - resolution: 'exact_hourly' (default, matches :00 to :00) or
-                      'half_hourly_mapped' (maps hourly forecast to both :00 and :30)
-                      
-        Returns a dictionary with:
-        - 'matched_series': List of matched interval objects
-        - 'cutoff_time_applied': Cutoff time string used
-        - 'total_actual_intervals': Total actual records evaluated
-        - 'matched_intervals_count': Number of successfully matched intervals
-        - 'unmatched_intervals_count': Number of actual intervals with no eligible forecast
+        Methodology:
+        1. Hourly Matching ('exact_hourly' / 'hourly_averaged'):
+           - WINDFOR forecasts are published for 1-hour delivery windows (e.g., 12:00:00Z to 13:00:00Z).
+           - Elexon FUELHH actuals report average MW for two 30-minute settlement periods in that hour
+             (:00:00Z and :30:00Z).
+           - To represent the true hourly delivery outturn, the actual generation is computed as the
+             arithmetic mean of the two settlement period MW values:
+             Actual_hour = (Actual_:00 + Actual_:30) / 2.0  (MW)
+           - Interval duration is 1.0 hour.
+        
+        2. Half-Hourly Matching ('half_hourly_mapped'):
+           - Each 30-minute settlement period is evaluated individually (n = 1,488 for January 2026).
+           - The prevailing hourly forecast for that hour block is matched to both :00 and :30 actuals.
+           - Interval duration is 0.5 hours.
         """
         cutoff_str = cutoff_time_str or self.cutoff_time_str
-        
+
         # Index forecasts by target startTime for O(1) lookups
         forecasts_by_target: Dict[str, List[Dict]] = {}
         for f in forecasts:
@@ -153,72 +202,163 @@ class ForecastSelector:
                     forecasts_by_target[st] = []
                 forecasts_by_target[st].append(f)
 
+        # Index actuals by startTime for O(1) lookups
+        actuals_by_start: Dict[str, Dict] = {}
+        for a in actuals:
+            st = a.get('startTime')
+            if st and a.get('generation') is not None:
+                actuals_by_start[st] = a
+
         matched_series: List[Dict] = []
         unmatched_count = 0
 
-        for act in actuals:
-            st_iso = act.get('startTime')
-            act_gen = act.get('generation')
-            if not st_iso or act_gen is None:
-                continue
+        if resolution in ("exact_hourly", "hourly_averaged"):
+            # Target intervals are hourly (:00:00Z)
+            # Find all hourly start timestamps from actuals or forecasts
+            hourly_start_keys = sorted(set(
+                st for st in list(actuals_by_start.keys()) + list(forecasts_by_target.keys())
+                if st.endswith(':00:00Z')
+            ))
 
-            target_dt = parse_iso_timestamp(st_iso)
-            if not target_dt:
-                continue
-
-            # Determine matching forecast key depending on resolution
-            if resolution == "half_hourly_mapped":
-                # For XX:30:00, map to the hourly forecast at XX:00:00
-                forecast_key_dt = target_dt.replace(minute=0, second=0, microsecond=0)
-                forecast_key = format_iso_utc(forecast_key_dt)
-            else:
-                # exact_hourly: only evaluate intervals that start at :00:00
-                if target_dt.minute != 0:
+            for st_iso in hourly_start_keys:
+                target_dt = parse_iso_timestamp(st_iso)
+                if not target_dt:
                     continue
-                forecast_key = st_iso
 
-            publications = forecasts_by_target.get(forecast_key, [])
-            cutoff_dt = compute_day_ahead_cutoff(target_dt, cutoff_str)
+                # Construct both 30-min settlement period timestamps
+                st_00 = st_iso
+                st_30_dt = target_dt + timedelta(minutes=30)
+                st_30 = format_iso_utc(st_30_dt)
 
-            decision_f = self.select_forecast_at_cutoff(target_dt, publications, cutoff_dt)
-            latest_f = self.select_latest_forecast(target_dt, publications)
+                act_00 = actuals_by_start.get(st_00)
+                act_30 = actuals_by_start.get(st_30)
 
-            if decision_f is None:
-                unmatched_count += 1
-                # Still include or record that decision forecast is unavailable
-                matched_series.append({
-                    'startTime': st_iso,
-                    'settlementDate': act.get('settlementDate'),
-                    'settlementPeriod': act.get('settlementPeriod'),
-                    'actual': act_gen,
-                    'decision_forecast': None,
-                    'decision_publish_time': None,
-                    'latest_forecast': latest_f.get('generation') if latest_f else None,
-                    'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
-                    'cutoff_timestamp': format_iso_utc(cutoff_dt),
-                    'error': None,
-                    'abs_error': None,
-                    'status': 'missing_decision_forecast',
-                })
-            else:
-                f_val = decision_f.get('generation')
-                err = round(f_val - act_gen, 2)
-                abs_err = round(abs(err), 2)
+                # Both settlement periods are required to compute true hourly average
+                if act_00 is not None and act_30 is not None:
+                    gen_00 = act_00.get('generation')
+                    gen_30 = act_30.get('generation')
+                    if gen_00 is not None and gen_30 is not None:
+                        act_gen = round((float(gen_00) + float(gen_30)) / 2.0, 2)
+                        actual_status = 'complete_hourly_average'
+                    else:
+                        act_gen = None
+                        actual_status = 'incomplete_settlement_period'
+                elif act_00 is not None:
+                    # Only first half-hour present
+                    act_gen = act_00.get('generation')
+                    actual_status = 'first_half_only'
+                else:
+                    act_gen = None
+                    actual_status = 'missing_actual'
 
-                matched_series.append({
-                    'startTime': st_iso,
-                    'settlementDate': act.get('settlementDate'),
-                    'settlementPeriod': act.get('settlementPeriod'),
-                    'actual': act_gen,
-                    'decision_forecast': f_val,
-                    'decision_publish_time': decision_f.get('publishTime'),
-                    'latest_forecast': latest_f.get('generation') if latest_f else None,
-                    'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
-                    'cutoff_timestamp': format_iso_utc(cutoff_dt),
-                    'error': err,
-                    'abs_error': abs_err,
-                    'status': 'matched',
-                })
+                publications = forecasts_by_target.get(st_iso, [])
+                cutoff_dt = compute_day_ahead_cutoff(target_dt, cutoff_str)
+
+                decision_f = self.select_forecast_at_cutoff(target_dt, publications, cutoff_dt)
+                latest_f = self.select_latest_forecast(target_dt, publications)
+
+                if decision_f is None or act_gen is None:
+                    unmatched_count += 1
+                    status_flag = 'missing_decision_forecast' if decision_f is None else 'missing_actual'
+                    matched_series.append({
+                        'startTime': st_iso,
+                        'settlementDate': act_00.get('settlementDate') if act_00 else None,
+                        'settlementPeriod': act_00.get('settlementPeriod') if act_00 else None,
+                        'actual': act_gen,
+                        'actual_method': actual_status,
+                        'decision_forecast': None,
+                        'decision_publish_time': None,
+                        'latest_forecast': latest_f.get('generation') if latest_f else None,
+                        'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
+                        'cutoff_timestamp': format_iso_utc(cutoff_dt),
+                        'interval_duration_hours': 1.0,
+                        'error': None,
+                        'abs_error': None,
+                        'status': status_flag,
+                    })
+                else:
+                    f_val = float(decision_f.get('generation'))
+                    err = round(f_val - act_gen, 2)
+                    abs_err = round(abs(err), 2)
+
+                    matched_series.append({
+                        'startTime': st_iso,
+                        'settlementDate': act_00.get('settlementDate') if act_00 else None,
+                        'settlementPeriod': act_00.get('settlementPeriod') if act_00 else None,
+                        'actual': act_gen,
+                        'actual_method': actual_status,
+                        'decision_forecast': f_val,
+                        'decision_publish_time': decision_f.get('publishTime'),
+                        'latest_forecast': latest_f.get('generation') if latest_f else None,
+                        'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
+                        'cutoff_timestamp': format_iso_utc(cutoff_dt),
+                        'interval_duration_hours': 1.0,
+                        'error': err,
+                        'abs_error': abs_err,
+                        'status': 'matched',
+                    })
+
+        else:
+            # Half-hourly resolution ('half_hourly_mapped')
+            # Evaluate every 30-minute settlement period
+            half_hour_keys = sorted(actuals_by_start.keys())
+
+            for st_iso in half_hour_keys:
+                act = actuals_by_start[st_iso]
+                act_gen = act.get('generation')
+                target_dt = parse_iso_timestamp(st_iso)
+                if not target_dt or act_gen is None:
+                    continue
+
+                # Map 30-min interval to the parent hour's forecast
+                hour_dt = target_dt.replace(minute=0, second=0, microsecond=0)
+                hour_iso = format_iso_utc(hour_dt)
+
+                publications = forecasts_by_target.get(hour_iso, [])
+                cutoff_dt = compute_day_ahead_cutoff(target_dt, cutoff_str)
+
+                decision_f = self.select_forecast_at_cutoff(target_dt, publications, cutoff_dt)
+                latest_f = self.select_latest_forecast(target_dt, publications)
+
+                if decision_f is None:
+                    unmatched_count += 1
+                    matched_series.append({
+                        'startTime': st_iso,
+                        'settlementDate': act.get('settlementDate'),
+                        'settlementPeriod': act.get('settlementPeriod'),
+                        'actual': act_gen,
+                        'actual_method': 'settlement_period_half_hour',
+                        'decision_forecast': None,
+                        'decision_publish_time': None,
+                        'latest_forecast': latest_f.get('generation') if latest_f else None,
+                        'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
+                        'cutoff_timestamp': format_iso_utc(cutoff_dt),
+                        'interval_duration_hours': 0.5,
+                        'error': None,
+                        'abs_error': None,
+                        'status': 'missing_decision_forecast',
+                    })
+                else:
+                    f_val = float(decision_f.get('generation'))
+                    err = round(f_val - act_gen, 2)
+                    abs_err = round(abs(err), 2)
+
+                    matched_series.append({
+                        'startTime': st_iso,
+                        'settlementDate': act.get('settlementDate'),
+                        'settlementPeriod': act.get('settlementPeriod'),
+                        'actual': act_gen,
+                        'actual_method': 'settlement_period_half_hour',
+                        'decision_forecast': f_val,
+                        'decision_publish_time': decision_f.get('publishTime'),
+                        'latest_forecast': latest_f.get('generation') if latest_f else None,
+                        'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
+                        'cutoff_timestamp': format_iso_utc(cutoff_dt),
+                        'interval_duration_hours': 0.5,
+                        'error': err,
+                        'abs_error': abs_err,
+                        'status': 'matched',
+                    })
 
         valid_matched = [m for m in matched_series if m['status'] == 'matched']
         return {
@@ -264,13 +404,20 @@ class ForecastSelector:
         enhanced_pubs = []
         prev_gen = None
         for p in pubs:
-            pub_dt = parse_iso_timestamp(p['publishTime'])
-            lead_hours = round((target_dt - pub_dt).total_seconds() / 3600.0, 1) if pub_dt else None
+            pub_dt = parse_iso_timestamp(p.get('publishTime'))
+            if pub_dt:
+                pub_utc = pub_dt.astimezone(UTC_TZ)
+                target_utc = target_dt.astimezone(UTC_TZ)
+                lead_hours = round((target_utc - pub_utc).total_seconds() / 3600.0, 1)
+                is_before_cutoff = (pub_utc <= cutoff_dt)
+            else:
+                lead_hours = None
+                is_before_cutoff = False
+
             gen_val = p.get('generation', 0)
             delta = round(gen_val - prev_gen, 2) if prev_gen is not None else 0.0
 
             is_active_at_cutoff = (p.get('publishTime') == decision_selected_pub_time)
-            is_before_cutoff = bool(p.get('publishTime') and p['publishTime'] <= cutoff_iso)
 
             enhanced_pubs.append({
                 'publishTime': p.get('publishTime'),
@@ -286,7 +433,7 @@ class ForecastSelector:
         return {
             'target_time': target_iso,
             'cutoff_time': cutoff_iso,
-            'cutoff_time_rule': f"{cutoff_str} Europe/London on D-1",
+            'cutoff_time_rule': f"{cutoff_str} Europe/London on D-1 (Wholesale Day-Ahead Decision Cutoff)",
             'total_publications': len(enhanced_pubs),
             'selected_decision_forecast': decision_selected,
             'publications': enhanced_pubs,

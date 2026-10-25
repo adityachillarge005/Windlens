@@ -97,7 +97,7 @@ export default function Dashboard({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1 max-w-3xl">
-                Every delivery interval below displays the forecast available prior to the day-ahead wholesale procurement auction closure (EPEX SPOT / Nord Pool). Later forecast revisions published closer to delivery are classified as post-cutoff intraday.
+                Every delivery interval below displays the forecast available prior to the day-ahead procurement decision cutoff (11:00 D-1 auction default). Later forecast revisions published closer to delivery are classified as post-cutoff intraday.
               </p>
             </div>
           </div>
@@ -141,10 +141,10 @@ export default function Dashboard({
         />
         <KPICard
           title="Resolution Mode"
-          value={resolution === 'exact_hourly' ? 'Exact Hourly' : 'Half-Hour Mapped'}
+          value={resolution === 'exact_hourly' ? 'Hourly Averaged' : 'Half-Hour Mapped'}
           unit=""
-          subtitle={resolution === 'exact_hourly' ? '744 expected intervals' : '1,488 expected intervals'}
-          tooltip="Hourly exact matches vs half-hourly settlement periods mapped from hourly forecasts."
+          subtitle={resolution === 'exact_hourly' ? '744 delivery hours' : '1,488 settlement periods'}
+          tooltip="Hourly averaged outturn ((A_:00 + A_:30) / 2) vs half-hourly settlement periods mapped from hourly forecasts."
           variant="warning"
         />
       </div>
