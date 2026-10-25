@@ -29,6 +29,7 @@ import {
   ExternalLink,
   ChevronLeft,
   ChevronRight,
+  Zap,
 } from 'lucide-react';
 
 export default function Accuracy({
@@ -37,6 +38,7 @@ export default function Accuracy({
   startDate,
   endDate,
   onSelectInterval,
+  darkMode,
 }) {
   const [summaryData, setSummaryData] = useState(null);
   const [seriesData, setSeriesData] = useState(null);
@@ -120,34 +122,36 @@ export default function Accuracy({
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards Row */}
+      {/* Primary Accuracy KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard
           title="Mean Absolute Error (MAE)"
           value={metrics.mae_mw}
           unit="MW"
-          subtitle="Average absolute error magnitude"
+          subtitle="Typical deviation magnitude"
           comparison={
             metrics.latest_available_comparison?.mae_mw
               ? `vs ${metrics.latest_available_comparison.mae_mw} MW (Latest)`
               : null
           }
-          tooltip="MAE = (1/n) * sum(|Forecast - Actual|). Measures the typical magnitude of day-ahead volume deviations without penalizing large errors disproportionately."
+          tooltip="MAE = (1/n) * sum(|Forecast - Actual|). Measures typical day-ahead volume deviations without penalizing large errors disproportionately."
           variant="primary"
+          sparkline={true}
         />
 
         <KPICard
           title="Root Mean Squared Error (RMSE)"
           value={metrics.rmse_mw}
           unit="MW"
-          subtitle="Heavily penalizes extreme misses"
+          subtitle="Quadratic penalty for extreme misses"
           comparison={
             metrics.latest_available_comparison?.rmse_mw
               ? `vs ${metrics.latest_available_comparison.rmse_mw} MW (Latest)`
               : null
           }
           tooltip="RMSE = sqrt((1/n) * sum((Forecast - Actual)^2)). Provides stronger penalties for large forecast misses, which cause the greatest wholesale balancing exposure."
-          variant="warning"
+          variant="neutral"
+          sparkline={true}
         />
 
         <KPICard
@@ -156,20 +160,22 @@ export default function Accuracy({
           unit="MW"
           subtitle={
             metrics.bias_mw > 0
-              ? 'Tendency to Over-Forecast (+)'
+              ? 'Over-Forecast (+ Long)'
               : metrics.bias_mw < 0
-              ? 'Tendency to Under-Forecast (-)'
+              ? 'Under-Forecast (- Short)'
               : 'Zero Systematic Bias'
           }
-          tooltip="Bias = (1/n) * sum(Forecast - Actual). A positive bias indicates persistent over-forecasting (buying too much day-ahead). Negative bias indicates under-forecasting (short positions)."
+          comparison={metrics.bias_mw > 0 ? '+ Over-forecast' : '- Under-forecast'}
+          tooltip="Bias = (1/n) * sum(Forecast - Actual). Positive indicates systematic over-forecasting (buying excess day-ahead volume). Negative indicates short positions."
           variant={metrics.bias_mw > 0 ? 'warning' : 'primary'}
+          sparkline={true}
         />
 
         <KPICard
           title="WAPE (%)"
           value={metrics.wape_percent}
           unit="%"
-          subtitle="Weighted Absolute % Error"
+          subtitle="Normalized by actual volume"
           comparison={
             metrics.latest_available_comparison?.wape_percent
               ? `vs ${metrics.latest_available_comparison.wape_percent}% (Latest)`
@@ -182,88 +188,102 @@ export default function Accuracy({
 
       {/* Energy & Volume Distinction Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3.5 flex items-center justify-between">
+        <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-4 flex items-center justify-between shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
           <div>
-            <span className="text-[11px] text-slate-500 uppercase tracking-wider block">Total Actual Energy</span>
-            <span className="text-base font-bold font-mono text-emerald-400">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+              Total Actual Energy
+            </span>
+            <span className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
               {metrics.total_actual_energy_mwh ? Number(metrics.total_actual_energy_mwh).toLocaleString() : '—'} MWh
             </span>
-            <span className="text-[10px] text-slate-500 block">Metered Outturn Volume</span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500 block">Metered Outturn Volume</span>
           </div>
-          <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-1 rounded">
+          <span className="text-xs font-mono font-medium text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-white/5">
             {metrics.resolution === 'exact_hourly' ? '1.0h periods' : '0.5h periods'}
           </span>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3.5 flex items-center justify-between">
+        <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-4 flex items-center justify-between shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
           <div>
-            <span className="text-[11px] text-slate-500 uppercase tracking-wider block">Total Forecast Energy</span>
-            <span className="text-base font-bold font-mono text-sky-400">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+              Total Forecast Energy
+            </span>
+            <span className="text-base sm:text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
               {metrics.total_forecast_energy_mwh ? Number(metrics.total_forecast_energy_mwh).toLocaleString() : '—'} MWh
             </span>
-            <span className="text-[10px] text-slate-500 block">Day-Ahead Expected Volume</span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500 block">Day-Ahead Expected Volume</span>
           </div>
-          <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-1 rounded">
+          <span className="text-xs font-mono font-medium text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-white/5">
             Cutoff {cutoffTime} D-1
           </span>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3.5 flex items-center justify-between">
+        <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-4 flex items-center justify-between shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
           <div>
-            <span className="text-[11px] text-slate-500 uppercase tracking-wider block">Energy Net Imbalance</span>
-            <span className={`text-base font-bold font-mono ${
-              (metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh) > 0 ? 'text-amber-400' : 'text-sky-400'
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+              Energy Net Imbalance
+            </span>
+            <span className={`text-base sm:text-lg font-bold font-mono ${
+              (metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'
             }`}>
               {metrics.total_forecast_energy_mwh && metrics.total_actual_energy_mwh
                 ? `${((metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh) > 0 ? '+' : '')}${Number((metrics.total_forecast_energy_mwh - metrics.total_actual_energy_mwh).toFixed(1)).toLocaleString()} MWh`
                 : '—'}
             </span>
-            <span className="text-[10px] text-slate-500 block">MWh = MW × duration_hours</span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500 block">MWh = MW × duration_hours</span>
           </div>
-          <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-1 rounded">
+          <span className="text-xs font-mono font-medium text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-white/5">
             {metrics.matched_intervals || 0} intervals
           </span>
         </div>
       </div>
 
-      {/* Procurement Impact Callout */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
+      {/* Procurement Impact Context Callout */}
+      <div className="rounded-2xl border border-blue-200/70 dark:border-blue-900/40 bg-blue-50/60 dark:bg-blue-950/20 backdrop-blur-md p-4 text-xs text-slate-700 dark:text-slate-300 shadow-sm">
         <div className="flex items-start gap-3">
-          <HelpCircle className="w-4 h-4 text-sky-400 mt-0.5 flex-shrink-0" />
+          <HelpCircle className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
           <div className="space-y-1">
-            <span className="font-semibold text-slate-200">Procurement Context for UK Day-Ahead Decisions:</span>
-            <p className="text-slate-400">
-              In the UK wholesale market, wholesale day-ahead procurement decisions commit volumes ahead of delivery. An aggregate over-forecast (+{metrics.bias_mw || 0} MW bias) indicates that day-ahead forecasts persistently exceeded outturn, resulting in a contracted long volume position subject to intraday re-trading or system cash-out. Conversely, an under-forecast creates short positions requiring replacement power in the Balancing Mechanism. Note that portfolio commercial impact depends on market price spreads and balancing cash-out prices.
+            <span className="font-bold text-slate-900 dark:text-white">Procurement Context for UK Day-Ahead Decisions:</span>
+            <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+              In the UK wholesale power market, day-ahead procurement commits volume ahead of delivery. An aggregate over-forecast (+{metrics.bias_mw || 0} MW bias) indicates that day-ahead forecasts persistently exceeded outturn, causing market participants to contract long positions subject to intraday re-trading or system cash-out. Conversely, an under-forecast creates short positions requiring replacement power in the Balancing Mechanism. Note that portfolio financial impact depends on market price spreads and balancing cash-out prices.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Forecast vs Actual Time Series */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-        <h4 className="text-base font-semibold text-slate-100 flex items-center gap-2 mb-1">
-          <Activity className="w-4 h-4 text-sky-400" />
-          Decision-Time Forecast vs Actual Generation (January 2026)
-        </h4>
-        <p className="text-xs text-slate-400 mb-4">
-          Time-series tracking of delivery intervals. Hover on any point to inspect MW levels.
-        </p>
+      {/* Main Chart: Forecast vs Actual Generation Over Time */}
+      <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Activity className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              Decision-Time Forecast vs Actual Outturn (January 2026)
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Hourly comparison across all {metrics.matched_intervals || 0} evaluated intervals
+            </p>
+          </div>
+        </div>
 
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={timeSeriesChartData} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} dy={8} />
-              <YAxis stroke="#64748b" fontSize={11} tickLine={false} unit=" MW" />
+            <LineChart data={timeSeriesChartData} margin={{ top: 10, right: 15, left: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#1E293B' : '#F1F5F9'} vertical={false} />
+              <XAxis dataKey="time" stroke={darkMode ? '#64748B' : '#94A3B8'} fontSize={11} tickLine={false} axisLine={{ stroke: darkMode ? '#334155' : '#E2E8F0' }} dy={8} />
+              <YAxis stroke={darkMode ? '#64748B' : '#94A3B8'} fontSize={11} tickLine={false} axisLine={{ stroke: darkMode ? '#334155' : '#E2E8F0' }} unit=" MW" />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#0f172a',
-                  borderColor: '#334155',
-                  borderRadius: '0.5rem',
+                  backgroundColor: darkMode ? '#0F172A' : '#FFFFFF',
+                  borderColor: darkMode ? '#334155' : '#E2E8F0',
+                  color: darkMode ? '#F1F5F9' : '#0F172A',
+                  borderRadius: '0.75rem',
+                  boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
                   fontSize: '0.75rem',
                 }}
                 formatter={(val, name) => [
-                  `${Number(val).toLocaleString()} MW`,
+                  <span style={{ fontWeight: 600, color: name === 'decisionForecast' ? '#3B82F6' : '#10B981' }}>
+                    {Number(val).toLocaleString()} MW
+                  </span>,
                   name === 'decisionForecast' ? 'Decision Forecast (D-1)' : 'Actual Generation',
                 ]}
               />
@@ -271,118 +291,135 @@ export default function Accuracy({
               <Line
                 type="monotone"
                 dataKey="decisionForecast"
-                name="Decision Forecast"
-                stroke="#0284c7"
+                name="Decision Forecast (D-1)"
+                stroke="#2563EB"
                 strokeWidth={2}
                 dot={false}
+                activeDot={{ r: 5, fill: '#2563EB', stroke: darkMode ? '#0F172A' : '#FFFFFF', strokeWidth: 2 }}
               />
               <Line
                 type="monotone"
                 dataKey="actual"
                 name="Actual Generation"
-                stroke="#10b981"
+                stroke="#10B981"
                 strokeWidth={2}
                 dot={false}
+                activeDot={{ r: 5, fill: '#10B981', stroke: darkMode ? '#0F172A' : '#FFFFFF', strokeWidth: 2 }}
               />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Grid: Error Over Time & Scatter Plot */}
+      {/* Grid: Error Residuals & Scatter Plot */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Error Over Time (Residuals) */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-          <h4 className="text-sm font-semibold text-slate-100 flex items-center gap-2 mb-1">
-            <BarChart2 className="w-4 h-4 text-amber-400" />
-            Forecast Error Over Time (Error = Forecast − Actual)
-          </h4>
-          <p className="text-xs text-slate-400 mb-4">
+        {/* Error Over Time Bar Chart */}
+        <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              Forecast Error Residuals (Forecast − Actual)
+            </h4>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
             Positive bars indicate over-forecast; negative bars indicate under-forecast.
           </p>
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={timeSeriesChartData} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} dy={8} />
-                <YAxis stroke="#64748b" fontSize={10} tickLine={false} unit=" MW" />
-                <ReferenceLine y={0} stroke="#64748b" strokeWidth={1.5} />
+                <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#1E293B' : '#F1F5F9'} vertical={false} />
+                <XAxis dataKey="time" stroke={darkMode ? '#64748B' : '#94A3B8'} fontSize={10} tickLine={false} axisLine={{ stroke: darkMode ? '#334155' : '#E2E8F0' }} dy={8} />
+                <YAxis stroke={darkMode ? '#64748B' : '#94A3B8'} fontSize={10} tickLine={false} axisLine={{ stroke: darkMode ? '#334155' : '#E2E8F0' }} unit=" MW" />
+                <ReferenceLine y={0} stroke={darkMode ? '#64748B' : '#94A3B8'} strokeWidth={1.5} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderColor: '#334155',
-                    borderRadius: '0.5rem',
+                    backgroundColor: darkMode ? '#0F172A' : '#FFFFFF',
+                    borderColor: darkMode ? '#334155' : '#E2E8F0',
+                    color: darkMode ? '#F1F5F9' : '#0F172A',
+                    borderRadius: '0.75rem',
+                    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
                     fontSize: '0.75rem',
                   }}
-                  formatter={(val) => [`${Number(val).toLocaleString()} MW`, 'Forecast Error']}
+                  formatter={(val) => [
+                    <span style={{ fontWeight: 600, color: val >= 0 ? '#F59E0B' : '#3B82F6' }}>
+                      {Number(val).toLocaleString()} MW
+                    </span>,
+                    'Forecast Error',
+                  ]}
                 />
-                <Bar dataKey="error" fill="#38bdf8" />
+                <Bar dataKey="error" fill="#3B82F6" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Scatter Plot: Forecast vs Actual */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-          <h4 className="text-sm font-semibold text-slate-100 flex items-center gap-2 mb-1">
-            <Activity className="w-4 h-4 text-emerald-400" />
-            Scatter Plot: Decision Forecast vs Actual Generation
-          </h4>
-          <p className="text-xs text-slate-400 mb-4">
-            Points along the diagonal reference line indicate perfect forecast accuracy.
+        <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Activity className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              Scatter Alignment: Forecast vs Outturn
+            </h4>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+            Diagonal alignment indicates perfect forecast accuracy.
           </p>
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <ScatterChart margin={{ top: 10, right: 15, left: 10, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#1E293B' : '#F1F5F9'} />
                 <XAxis
                   type="number"
                   dataKey="actual"
                   name="Actual"
                   unit=" MW"
-                  stroke="#64748b"
+                  stroke={darkMode ? '#64748B' : '#94A3B8'}
                   fontSize={10}
                   tickLine={false}
+                  axisLine={{ stroke: darkMode ? '#334155' : '#E2E8F0' }}
                 />
                 <YAxis
                   type="number"
                   dataKey="forecast"
                   name="Forecast"
                   unit=" MW"
-                  stroke="#64748b"
+                  stroke={darkMode ? '#64748B' : '#94A3B8'}
                   fontSize={10}
                   tickLine={false}
+                  axisLine={{ stroke: darkMode ? '#334155' : '#E2E8F0' }}
                 />
                 <Tooltip
                   cursor={{ strokeDasharray: '3 3' }}
                   contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderColor: '#334155',
-                    borderRadius: '0.5rem',
+                    backgroundColor: darkMode ? '#0F172A' : '#FFFFFF',
+                    borderColor: darkMode ? '#334155' : '#E2E8F0',
+                    color: darkMode ? '#F1F5F9' : '#0F172A',
+                    borderRadius: '0.75rem',
+                    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
                     fontSize: '0.75rem',
                   }}
                   formatter={(val, name) => [`${Number(val).toLocaleString()} MW`, name]}
                 />
-                <Scatter name="Matched Intervals" data={scatterData} fill="#0ea5e9" opacity={0.6} />
+                <Scatter name="Matched Intervals" data={scatterData} fill="#2563EB" opacity={0.65} />
               </ScatterChart>
             </ResponsiveContainer>
           </div>
         </div>
       </div>
 
-      {/* Largest Forecast Misses Section */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-        <h4 className="text-sm font-semibold text-slate-100 flex items-center gap-2 mb-3">
-          <AlertCircle className="w-4 h-4 text-rose-400" />
+      {/* Top Deviations Section */}
+      <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
+        <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
+          <AlertCircle className="w-4 h-4 text-rose-500" />
           Largest Forecast Deviations (Top Misses)
         </h4>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Top Over-Forecasts */}
-          <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold text-amber-400 mb-2">
+          <div className="rounded-xl border border-slate-200/50 dark:border-white/5 bg-white/60 dark:bg-slate-800/40 backdrop-blur-xs p-4">
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider mb-3">
               <TrendingUp className="w-4 h-4" />
               Top Over-Forecasts (Forecast &gt;&gt; Actual)
             </div>
@@ -391,15 +428,15 @@ export default function Accuracy({
                 <div
                   key={idx}
                   onClick={() => onSelectInterval && onSelectInterval(m.startTime)}
-                  className="flex items-center justify-between p-2 rounded bg-slate-900 hover:bg-slate-800 cursor-pointer transition-colors text-xs border border-slate-800/60"
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs border border-slate-200/50 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 hover:shadow-xs cursor-pointer transition-all text-xs"
                 >
                   <div>
-                    <span className="font-mono text-slate-300 font-medium">{m.startTime}</span>
-                    <span className="text-slate-500 block text-[11px]">
+                    <span className="font-mono text-slate-900 dark:text-slate-100 font-bold block">{m.startTime}</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px]">
                       Actual: {m.actual?.toLocaleString()} MW | Fcst: {m.decision_forecast?.toLocaleString()} MW
                     </span>
                   </div>
-                  <span className="text-amber-400 font-semibold font-mono">
+                  <span className="text-amber-600 dark:text-amber-400 font-bold font-mono">
                     +{m.error?.toLocaleString()} MW
                   </span>
                 </div>
@@ -408,8 +445,8 @@ export default function Accuracy({
           </div>
 
           {/* Top Under-Forecasts */}
-          <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold text-sky-400 mb-2">
+          <div className="rounded-xl border border-slate-200/50 dark:border-white/5 bg-white/60 dark:bg-slate-800/40 backdrop-blur-xs p-4">
+            <div className="flex items-center gap-2 text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider mb-3">
               <TrendingDown className="w-4 h-4" />
               Top Under-Forecasts (Forecast &lt;&lt; Actual)
             </div>
@@ -418,15 +455,15 @@ export default function Accuracy({
                 <div
                   key={idx}
                   onClick={() => onSelectInterval && onSelectInterval(m.startTime)}
-                  className="flex items-center justify-between p-2 rounded bg-slate-900 hover:bg-slate-800 cursor-pointer transition-colors text-xs border border-slate-800/60"
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs border border-slate-200/50 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 hover:shadow-xs cursor-pointer transition-all text-xs"
                 >
                   <div>
-                    <span className="font-mono text-slate-300 font-medium">{m.startTime}</span>
-                    <span className="text-slate-500 block text-[11px]">
+                    <span className="font-mono text-slate-900 dark:text-slate-100 font-bold block">{m.startTime}</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px]">
                       Actual: {m.actual?.toLocaleString()} MW | Fcst: {m.decision_forecast?.toLocaleString()} MW
                     </span>
                   </div>
-                  <span className="text-sky-400 font-semibold font-mono">
+                  <span className="text-blue-600 dark:text-blue-400 font-bold font-mono">
                     {m.error?.toLocaleString()} MW
                   </span>
                 </div>
@@ -437,17 +474,17 @@ export default function Accuracy({
       </div>
 
       {/* Interval Level Detail Table */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
+      <div className="rounded-2xl border border-white/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
-            <h4 className="text-sm font-semibold text-slate-100">Interval-Level Forecast and Actual Records</h4>
-            <p className="text-xs text-slate-400">
-              Detailed breakdown of delivery intervals with error calculation and decision cutoff applied.
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white">Interval-Level Forecast and Actual Records</h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Verified dataset: 744 hourly delivery intervals with error residuals and cutoff timestamps.
             </p>
           </div>
 
           <div className="relative w-full sm:w-64">
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
               placeholder="Search timestamp..."
@@ -456,7 +493,7 @@ export default function Accuracy({
                 setTableSearch(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500"
+              className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-white/70 dark:bg-slate-950/70 backdrop-blur-xs border border-slate-200/80 dark:border-white/10 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-colors"
             />
           </div>
         </div>
@@ -464,43 +501,43 @@ export default function Accuracy({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[11px]">
-                <th className="py-2.5 px-3">Delivery Interval (UTC)</th>
-                <th className="py-2.5 px-3">Actual (MW)</th>
-                <th className="py-2.5 px-3">Decision Forecast (MW)</th>
-                <th className="py-2.5 px-3">Error (MW)</th>
-                <th className="py-2.5 px-3">Abs Error (MW)</th>
-                <th className="py-2.5 px-3">Cutoff Applied</th>
-                <th className="py-2.5 px-3 text-right">Actions</th>
+              <tr className="border-b border-slate-200/70 dark:border-slate-800 text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[11px] bg-slate-50/50 dark:bg-slate-800/40 backdrop-blur-xs">
+                <th className="py-2.5 px-3 rounded-l-lg font-semibold">Delivery Interval (UTC)</th>
+                <th className="py-2.5 px-3 font-semibold">Actual (MW)</th>
+                <th className="py-2.5 px-3 font-semibold">Decision Forecast (MW)</th>
+                <th className="py-2.5 px-3 font-semibold">Error (MW)</th>
+                <th className="py-2.5 px-3 font-semibold">Abs Error (MW)</th>
+                <th className="py-2.5 px-3 font-semibold">Cutoff Applied</th>
+                <th className="py-2.5 px-3 text-right rounded-r-lg font-semibold">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 font-mono">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
               {paginatedRows.map((row, idx) => (
-                <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-2 px-3 text-slate-300 font-medium">{row.startTime}</td>
-                  <td className="py-2 px-3 text-emerald-400 font-semibold">
+                <tr key={idx} className="hover:bg-white/60 dark:hover:bg-slate-800/40 transition-colors">
+                  <td className="py-2.5 px-3 text-slate-900 dark:text-slate-200 font-medium">{row.startTime}</td>
+                  <td className="py-2.5 px-3 text-emerald-600 dark:text-emerald-400 font-bold">
                     {row.actual !== null ? row.actual.toLocaleString() : '—'}
                   </td>
-                  <td className="py-2 px-3 text-sky-400 font-semibold">
+                  <td className="py-2.5 px-3 text-blue-600 dark:text-blue-400 font-bold">
                     {row.decision_forecast !== null ? row.decision_forecast.toLocaleString() : '—'}
                   </td>
                   <td
-                    className={`py-2 px-3 font-semibold ${
-                      row.error > 0 ? 'text-amber-400' : row.error < 0 ? 'text-sky-400' : 'text-slate-400'
+                    className={`py-2.5 px-3 font-bold ${
+                      row.error > 0 ? 'text-amber-600 dark:text-amber-400' : row.error < 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'
                     }`}
                   >
                     {row.error !== null ? (row.error > 0 ? `+${row.error}` : row.error) : '—'}
                   </td>
-                  <td className="py-2 px-3 text-slate-300">
+                  <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
                     {row.abs_error !== null ? row.abs_error : '—'}
                   </td>
-                  <td className="py-2 px-3 text-slate-500 text-[11px]">{row.cutoff_timestamp}</td>
-                  <td className="py-2 px-3 text-right">
+                  <td className="py-2.5 px-3 text-slate-400 text-[11px]">{row.cutoff_timestamp}</td>
+                  <td className="py-2.5 px-3 text-right">
                     <button
                       onClick={() => onSelectInterval && onSelectInterval(row.startTime)}
-                      className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300"
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
                     >
-                      Inspect Revisions
+                      Revisions
                       <ExternalLink className="w-3 h-3" />
                     </button>
                   </td>
@@ -508,7 +545,7 @@ export default function Accuracy({
               ))}
               {paginatedRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                  <td colSpan={7} className="py-8 text-center text-slate-400 dark:text-slate-500">
                     No matching records found.
                   </td>
                 </tr>
@@ -518,7 +555,7 @@ export default function Accuracy({
         </div>
 
         {/* Pagination Controls */}
-        <div className="flex items-center justify-between pt-4 mt-3 border-t border-slate-800 text-xs text-slate-400">
+        <div className="flex items-center justify-between pt-4 mt-2 border-t border-slate-100/80 dark:border-slate-800/60 text-xs text-slate-500 dark:text-slate-400">
           <span>
             Showing {(currentPage - 1) * pageSize + 1} to{' '}
             {Math.min(currentPage * pageSize, filteredTable.length)} of {filteredTable.length} intervals
@@ -527,17 +564,17 @@ export default function Accuracy({
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               disabled={currentPage === 1}
-              className="p-1 rounded bg-slate-800 text-slate-300 disabled:opacity-40 hover:bg-slate-700"
+              className="p-1.5 rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xs text-slate-600 dark:text-slate-300 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800 shadow-2xs"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="px-2 font-mono">
+            <span className="px-2.5 font-mono font-medium text-slate-700 dark:text-slate-300">
               {currentPage} / {totalPages}
             </span>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
-              className="p-1 rounded bg-slate-800 text-slate-300 disabled:opacity-40 hover:bg-slate-700"
+              className="p-1.5 rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xs text-slate-600 dark:text-slate-300 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800 shadow-2xs"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
