@@ -10,11 +10,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DEBUG=False
-      - SECRET_KEY=production-secure-key-windlens-2026-replace-if-needed
-      - ALLOWED_HOSTS=*
-      - CORS_ALLOW_ALL_ORIGINS=True
-      - ELEXON_BASE_URL=https://data.elexon.co.uk/bmrs/api/v1
+      - DEBUG=${DEBUG:-False}
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - ELEXON_BASE_URL=${ELEXON_BASE_URL:-https://data.elexon.co.uk/bmrs/api/v1}
     volumes:
       - ./backend/data_cache:/app/data_cache
     healthcheck:
@@ -32,6 +32,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8000/api}
     depends_on:
       backend:
         condition: service_healthy

@@ -118,7 +118,7 @@ class ForecastLatestView(BaseAnalyticsView):
             'resolution': resolution,
             'latest_eligible_publication': latest_eligible_pub,
             'total_intervals': len(filtered_series),
-            'matched_intervals': len([m for m in filtered_series if m.get('decision_forecast') is not None]),
+            'matched_intervals': len([m for m in filtered_series if m.get('status') == 'matched']),
             'series': filtered_series,
         })
 

@@ -84,7 +84,7 @@ export default function Methodology() {
                 Forecast Generation (WINDFOR)
               </span>
               <p className="text-xs text-slate-300 mb-2">
-                National wind generation forecasts published at regular intervals throughout each day leading up to gate closure.
+                National wind generation forecasts published at regular intervals throughout each day leading up to delivery.
               </p>
               <span className="text-[11px] text-slate-500 block">
                 StartTime: Target interval | PublishTime: Publication timestamp | Generation: MW
@@ -174,9 +174,9 @@ export default function Methodology() {
 
         <div className="space-y-4 text-xs">
           <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
-            <h4 className="font-semibold text-slate-200 mb-2">1. Day-Ahead Decision Cutoff vs BSC Gate Closure</h4>
+            <h4 className="font-semibold text-slate-200 mb-2">1. Day-Ahead Decision Cutoff Assumption vs Balancing Mechanism Gate Closure</h4>
             <p className="text-slate-400 leading-relaxed">
-              In Great Britain wholesale electricity markets, the primary day-ahead wholesale power auctions (EPEX SPOT and Nord Pool) close their order books at <strong>11:00 London time on D-1</strong> (the day before delivery D). In contrast, statutory Elexon Balancing Mechanism Gate Closure occurs <strong>1 hour before delivery</strong>. WindLens models the procurement team's decision point using a configurable cutoff (defaulting to 11:00 D-1 London time):
+              In Great Britain wholesale electricity markets, procurement teams evaluate day-ahead forecasts to inform commercial trading decisions before delivery. WindLens models the procurement desk's decision cutoff using a configurable evaluation assumption (defaulting to <strong>11:00 London time on D-1</strong>, adjustable to 12:00, 14:00, or 17:00). This analytical cutoff represents the internal decision deadline for daily order commitments and must not be conflated with the statutory Elexon Balancing Mechanism Gate Closure (which occurs 1 hour before each half-hour delivery interval):
               <br />
               <code className="block my-2 p-2 rounded bg-slate-900 font-mono text-sky-300">
                 Decision_Cutoff(Delivery_Interval) = (Delivery_Date_in_London − 1 Day) at [Cutoff_Time] Europe/London

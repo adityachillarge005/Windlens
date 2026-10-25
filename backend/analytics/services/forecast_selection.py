@@ -5,6 +5,7 @@ strict look-ahead bias prevention, forecast revision tracking, and outturn match
 """
 
 import logging
+import math
 from datetime import datetime, timezone, time, timedelta, date
 from typing import Dict, List, Optional, Tuple, Any
 from zoneinfo import ZoneInfo
@@ -13,8 +14,8 @@ from .data_processing import parse_iso_timestamp, format_iso_utc, LONDON_TZ, UTC
 logger = logging.getLogger(__name__)
 
 # Default Day-Ahead wholesale procurement decision cutoff assumption:
-# 11:00 Europe/London on D-1 (reflects the typical GB wholesale Day-Ahead auction order book deadline,
-# such as EPEX SPOT GB Day-Ahead 60-minute auction).
+# 11:00 Europe/London on D-1.
+# This is a configurable analytical assumption modeling procurement workflow deadlines.
 # Note: This is a configurable analytical assumption, distinct from the BSC Balancing Mechanism Gate Closure
 # which occurs 1 hour prior to each half-hour delivery interval.
 DEFAULT_CUTOFF_TIME_STR = "11:00"
@@ -202,11 +203,11 @@ class ForecastSelector:
                     forecasts_by_target[st] = []
                 forecasts_by_target[st].append(f)
 
-        # Index actuals by startTime for O(1) lookups
+        # Index actuals by startTime for O(1) lookups (retain all actual records to accurately audit presence vs invalid values)
         actuals_by_start: Dict[str, Dict] = {}
         for a in actuals:
             st = a.get('startTime')
-            if st and a.get('generation') is not None:
+            if st:
                 actuals_by_start[st] = a
 
         matched_series: List[Dict] = []
@@ -233,23 +234,43 @@ class ForecastSelector:
                 act_00 = actuals_by_start.get(st_00)
                 act_30 = actuals_by_start.get(st_30)
 
-                # Both settlement periods are required to compute true hourly average
-                if act_00 is not None and act_30 is not None:
+                # STRICT RULE: An hourly actual is considered valid ONLY when BOTH required
+                # half-hour readings exist and contain valid numeric generation values.
+                # If only one reading exists, or either reading is missing/invalid, mark as incomplete
+                # and exclude from matched accuracy metrics.
+                act_gen = None
+                actual_status = None
+                exclusion_reason = None
+
+                if act_00 is None and act_30 is None:
+                    actual_status = 'missing_actual'
+                    exclusion_reason = 'missing_both_settlement_periods'
+                elif act_00 is None:
+                    actual_status = 'incomplete_actual'
+                    exclusion_reason = 'missing_first_settlement_period'
+                elif act_30 is None:
+                    actual_status = 'incomplete_actual'
+                    exclusion_reason = 'missing_second_settlement_period'
+                else:
                     gen_00 = act_00.get('generation')
                     gen_30 = act_30.get('generation')
-                    if gen_00 is not None and gen_30 is not None:
-                        act_gen = round((float(gen_00) + float(gen_30)) / 2.0, 2)
-                        actual_status = 'complete_hourly_average'
+                    if gen_00 is None or gen_30 is None:
+                        actual_status = 'incomplete_actual'
+                        exclusion_reason = 'missing_generation_value'
                     else:
-                        act_gen = None
-                        actual_status = 'incomplete_settlement_period'
-                elif act_00 is not None:
-                    # Only first half-hour present
-                    act_gen = act_00.get('generation')
-                    actual_status = 'first_half_only'
-                else:
-                    act_gen = None
-                    actual_status = 'missing_actual'
+                        try:
+                            val_00 = float(gen_00)
+                            val_30 = float(gen_30)
+                            if math.isnan(val_00) or math.isnan(val_30) or math.isinf(val_00) or math.isinf(val_30):
+                                actual_status = 'incomplete_actual'
+                                exclusion_reason = 'invalid_generation_value'
+                            else:
+                                act_gen = round((val_00 + val_30) / 2.0, 2)
+                                actual_status = 'complete_hourly_average'
+                                exclusion_reason = None
+                        except (ValueError, TypeError):
+                            actual_status = 'incomplete_actual'
+                            exclusion_reason = 'invalid_generation_value'
 
                 publications = forecasts_by_target.get(st_iso, [])
                 cutoff_dt = compute_day_ahead_cutoff(target_dt, cutoff_str)
@@ -259,15 +280,25 @@ class ForecastSelector:
 
                 if decision_f is None or act_gen is None:
                     unmatched_count += 1
-                    status_flag = 'missing_decision_forecast' if decision_f is None else 'missing_actual'
+                    if decision_f is None and act_gen is None:
+                        status_flag = 'missing_both'
+                        final_exclusion = f"no_forecast_published_before_cutoff; {exclusion_reason}"
+                    elif decision_f is None:
+                        status_flag = 'missing_decision_forecast'
+                        final_exclusion = 'no_forecast_published_before_cutoff'
+                    else:
+                        status_flag = 'incomplete_actual'
+                        final_exclusion = exclusion_reason
+
                     matched_series.append({
                         'startTime': st_iso,
-                        'settlementDate': act_00.get('settlementDate') if act_00 else None,
+                        'settlementDate': act_00.get('settlementDate') if act_00 else (act_30.get('settlementDate') if act_30 else None),
                         'settlementPeriod': act_00.get('settlementPeriod') if act_00 else None,
-                        'actual': act_gen,
+                        'actual': None,  # Strictly None when incomplete to prevent accidental usage
                         'actual_method': actual_status,
+                        'exclusion_reason': final_exclusion,
                         'decision_forecast': None,
-                        'decision_publish_time': None,
+                        'decision_publish_time': decision_f.get('publishTime') if decision_f else None,
                         'latest_forecast': latest_f.get('generation') if latest_f else None,
                         'latest_publish_time': latest_f.get('publishTime') if latest_f else None,
                         'cutoff_timestamp': format_iso_utc(cutoff_dt),
@@ -287,6 +318,7 @@ class ForecastSelector:
                         'settlementPeriod': act_00.get('settlementPeriod') if act_00 else None,
                         'actual': act_gen,
                         'actual_method': actual_status,
+                        'exclusion_reason': None,
                         'decision_forecast': f_val,
                         'decision_publish_time': decision_f.get('publishTime'),
                         'latest_forecast': latest_f.get('generation') if latest_f else None,

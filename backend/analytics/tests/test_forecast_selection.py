@@ -153,11 +153,10 @@ class TestForecastSelection(unittest.TestCase):
         self.assertEqual(latest['publishTime'], '2026-01-05T13:30:00Z')
         self.assertEqual(latest['generation'], 1800.0)
 
-    def test_hourly_averaged_actual_matching(self):
+    def test_hourly_matching_both_readings_present(self):
         """
-        Synthetic test: For an hourly delivery window (12:00:00Z),
-        actual is the arithmetic mean of the two 30-min settlement periods (:00 and :30).
-        SP 25 (:00) = 1000 MW, SP 26 (:30) = 1200 MW -> Average Outturn = 1100 MW.
+        Synthetic test: Both required settlement periods (:00 and :30) exist with valid numeric generation.
+        Hourly outturn is the exact arithmetic mean ((1000 + 1200) / 2 = 1100.0 MW).
         """
         synthetic_actuals = [
             {'startTime': '2026-01-05T12:00:00Z', 'generation': 1000.0},
@@ -176,12 +175,144 @@ class TestForecastSelection(unittest.TestCase):
 
         matched = result['matched_series']
         self.assertEqual(len(matched), 1)
-        self.assertEqual(matched[0]['actual'], 1100.0) # (1000 + 1200) / 2
+        self.assertEqual(result['valid_matched_count'], 1)
+        self.assertEqual(result['unmatched_count'], 0)
+        self.assertEqual(matched[0]['status'], 'matched')
+        self.assertEqual(matched[0]['actual'], 1100.0)
         self.assertEqual(matched[0]['decision_forecast'], 1150.0)
-        self.assertEqual(matched[0]['error'], 50.0) # 1150 - 1100
-        self.assertEqual(matched[0]['abs_error'], 50.0)
-        self.assertEqual(matched[0]['interval_duration_hours'], 1.0)
         self.assertEqual(matched[0]['actual_method'], 'complete_hourly_average')
+        self.assertIsNone(matched[0]['exclusion_reason'])
+
+    def test_hourly_matching_first_reading_missing(self):
+        """
+        Synthetic test: First settlement period (:00) is missing, but :30 is present.
+        Must mark interval as incomplete and exclude from matched count.
+        """
+        synthetic_actuals = [
+            {'startTime': '2026-01-05T12:30:00Z', 'generation': 1200.0},
+        ]
+        synthetic_forecasts = [
+            {'startTime': '2026-01-05T12:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1150.0},
+        ]
+
+        result = self.selector.match_forecasts_and_actuals(
+            synthetic_actuals,
+            synthetic_forecasts,
+            cutoff_time_str="11:00",
+            resolution="exact_hourly"
+        )
+
+        matched = result['matched_series']
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(result['valid_matched_count'], 0)
+        self.assertEqual(result['unmatched_count'], 1)
+        self.assertEqual(matched[0]['status'], 'incomplete_actual')
+        self.assertIsNone(matched[0]['actual'])
+        self.assertEqual(matched[0]['actual_method'], 'incomplete_actual')
+        self.assertEqual(matched[0]['exclusion_reason'], 'missing_first_settlement_period')
+
+    def test_hourly_matching_second_reading_missing(self):
+        """
+        Synthetic test: Second settlement period (:30) is missing, but :00 is present.
+        Must NOT fall back to using :00 as hourly actual. Must mark as incomplete and exclude.
+        """
+        synthetic_actuals = [
+            {'startTime': '2026-01-05T12:00:00Z', 'generation': 1000.0},
+        ]
+        synthetic_forecasts = [
+            {'startTime': '2026-01-05T12:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1150.0},
+        ]
+
+        result = self.selector.match_forecasts_and_actuals(
+            synthetic_actuals,
+            synthetic_forecasts,
+            cutoff_time_str="11:00",
+            resolution="exact_hourly"
+        )
+
+        matched = result['matched_series']
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(result['valid_matched_count'], 0)
+        self.assertEqual(result['unmatched_count'], 1)
+        self.assertEqual(matched[0]['status'], 'incomplete_actual')
+        self.assertIsNone(matched[0]['actual'])
+        self.assertEqual(matched[0]['actual_method'], 'incomplete_actual')
+        self.assertEqual(matched[0]['exclusion_reason'], 'missing_second_settlement_period')
+
+    def test_hourly_matching_invalid_or_missing_generation(self):
+        """
+        Synthetic test: Both readings exist, but generation is None or unparseable.
+        Must mark as incomplete and exclude from matched metrics.
+        """
+        synthetic_actuals = [
+            {'startTime': '2026-01-05T12:00:00Z', 'generation': None},
+            {'startTime': '2026-01-05T12:30:00Z', 'generation': 1200.0},
+            {'startTime': '2026-01-05T13:00:00Z', 'generation': 1000.0},
+            {'startTime': '2026-01-05T13:30:00Z', 'generation': 'corrupted_value'},
+        ]
+        synthetic_forecasts = [
+            {'startTime': '2026-01-05T12:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1100.0},
+            {'startTime': '2026-01-05T13:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1100.0},
+        ]
+
+        result = self.selector.match_forecasts_and_actuals(
+            synthetic_actuals,
+            synthetic_forecasts,
+            cutoff_time_str="11:00",
+            resolution="exact_hourly"
+        )
+
+        matched = result['matched_series']
+        self.assertEqual(len(matched), 2)
+        self.assertEqual(result['valid_matched_count'], 0)
+        self.assertEqual(result['unmatched_count'], 2)
+        self.assertIsNone(matched[0]['actual'])
+        self.assertEqual(matched[0]['exclusion_reason'], 'missing_generation_value')
+        self.assertIsNone(matched[1]['actual'])
+        self.assertEqual(matched[1]['exclusion_reason'], 'invalid_generation_value')
+
+    def test_incomplete_intervals_do_not_contribute_to_metrics(self):
+        """
+        Synthetic test: Verify that incomplete intervals are strictly excluded from AccuracyCalculator metrics.
+        Given:
+        - Hour 12:00: Complete (A=1000, F=1200 -> Error = +200)
+        - Hour 13:00: Incomplete (:30 missing)
+        - Hour 14:00: Incomplete (:00 generation is None)
+        Reported metrics must have n=1, MAE=200.0, Bias=+200.0.
+        """
+        from analytics.services.accuracy_metrics import AccuracyCalculator
+
+        synthetic_actuals = [
+            # Hour 12: complete
+            {'startTime': '2026-01-05T12:00:00Z', 'generation': 900.0},
+            {'startTime': '2026-01-05T12:30:00Z', 'generation': 1100.0}, # Mean = 1000.0
+            # Hour 13: missing :30
+            {'startTime': '2026-01-05T13:00:00Z', 'generation': 800.0},
+            # Hour 14: missing generation
+            {'startTime': '2026-01-05T14:00:00Z', 'generation': None},
+            {'startTime': '2026-01-05T14:30:00Z', 'generation': 1200.0},
+        ]
+        synthetic_forecasts = [
+            {'startTime': '2026-01-05T12:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1200.0},
+            {'startTime': '2026-01-05T13:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1300.0},
+            {'startTime': '2026-01-05T14:00:00Z', 'publishTime': '2026-01-04T09:00:00Z', 'generation': 1400.0},
+        ]
+
+        result = self.selector.match_forecasts_and_actuals(
+            synthetic_actuals,
+            synthetic_forecasts,
+            cutoff_time_str="11:00",
+            resolution="exact_hourly"
+        )
+
+        metrics = AccuracyCalculator.calculate_summary_metrics(result['matched_series'])
+
+        # Only Hour 12 must contribute
+        self.assertEqual(metrics['valid_matched_count'], 1)
+        self.assertEqual(metrics['mae_mw'], 200.0)
+        self.assertEqual(metrics['bias_mw'], 200.0)
+        self.assertEqual(metrics['mean_actual_mw'], 1000.0)
+        self.assertEqual(metrics['mean_forecast_mw'], 1200.0)
 
     def test_inspect_interval_revisions_tagging(self):
         """Synthetic test: Check revision deltas and category tagging."""

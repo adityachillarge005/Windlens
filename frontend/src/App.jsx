@@ -82,10 +82,10 @@ export default function App() {
                   className="bg-transparent text-slate-200 font-medium focus:outline-none cursor-pointer"
                   title="Configurable day-ahead wholesale procurement decision cutoff (D-1 Europe/London)"
                 >
-                  <option value="11:00" className="bg-slate-900">11:00 D-1 (Auction Default)</option>
-                  <option value="12:00" className="bg-slate-900">12:00 D-1 (Midday Gate)</option>
-                  <option value="14:00" className="bg-slate-900">14:00 D-1 (Afternoon)</option>
-                  <option value="17:00" className="bg-slate-900">17:00 D-1 (Evening Gate)</option>
+                  <option value="11:00" className="bg-slate-900">11:00 D-1 (Default Cutoff)</option>
+                  <option value="12:00" className="bg-slate-900">12:00 D-1 (12:00 Cutoff)</option>
+                  <option value="14:00" className="bg-slate-900">14:00 D-1 (14:00 Cutoff)</option>
+                  <option value="17:00" className="bg-slate-900">17:00 D-1 (17:00 Cutoff)</option>
                 </select>
               </div>
 

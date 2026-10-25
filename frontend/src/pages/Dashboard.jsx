@@ -158,7 +158,7 @@ export default function Dashboard({
               Wind Generation: Decision-Time Forecast vs Actual vs Latest Available
             </h4>
             <p className="text-xs text-slate-400 mt-0.5">
-              Compare what the procurement desk saw at the Day-Ahead cutoff ({cutoffTime} D-1) vs outturn and final gate forecasts.
+              Compare what the procurement desk saw at the Day-Ahead cutoff ({cutoffTime} D-1) vs outturn and latest pre-delivery forecasts.
             </p>
           </div>
 

@@ -13,10 +13,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # strict security checks are enforced.
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-# SECRET_KEY: In production (DEBUG=False), require an explicit non-trivial secret key.
-# In local development (DEBUG=True), allow a safe development fallback.
+# Insecure example keys that must NEVER be used as a real production secret
+KNOWN_INSECURE_KEYS = {
+    'windlens-insecure-dev-key-change-in-production-2026',
+    'production-secure-key-windlens-2026-replace-if-needed',
+    'change-this-in-production-to-a-secure-random-key',
+    'replace-with-a-secure-random-secret-key',
+}
+
 _dev_fallback_key = 'windlens-insecure-dev-key-change-in-production-2026'
-SECRET_KEY = os.environ.get('SECRET_KEY', '')
+SECRET_KEY = os.environ.get('SECRET_KEY', '').strip()
 
 if not SECRET_KEY:
     if DEBUG:
@@ -25,17 +31,27 @@ if not SECRET_KEY:
         raise ImproperlyConfigured(
             "CRITICAL: The SECRET_KEY environment variable must be set when running in production (DEBUG=False)."
         )
+elif not DEBUG and SECRET_KEY in KNOWN_INSECURE_KEYS:
+    raise ImproperlyConfigured(
+        "CRITICAL: A fixed example secret key cannot be used as a real production secret. "
+        "Generate a strong cryptographic key using: python -c \"import secrets; print(secrets.token_urlsafe(50))\""
+    )
 
 # ALLOWED_HOSTS: In development, allow localhost/127.0.0.1.
-# In production, parse explicit hostnames from the ALLOWED_HOSTS environment variable.
-allowed_hosts_env = os.environ.get('ALLOWED_HOSTS', '')
+# In production, require explicit hostnames without wildcards.
+allowed_hosts_env = os.environ.get('ALLOWED_HOSTS', '').strip()
 if allowed_hosts_env:
     ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
 elif DEBUG:
     ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
 else:
-    # Safe production default: do not allow wildcard '*' by default
-    ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+    # Safe production default: explicit hostnames only, never wildcard '*'
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'backend']
+
+if not DEBUG and '*' in ALLOWED_HOSTS:
+    raise ImproperlyConfigured(
+        "CRITICAL: Wildcard '*' in ALLOWED_HOSTS is strictly forbidden in production (DEBUG=False)."
+    )
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -106,18 +122,22 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS configuration:
-# In development (DEBUG=True), allow all origins for local convenience.
-# In production (DEBUG=False), enforce explicit CORS_ALLOWED_ORIGINS.
+# In development (DEBUG=True), allow all origins for local convenience if configured.
+# In production (DEBUG=False), CORS_ALLOW_ALL_ORIGINS is strictly forbidden and always False.
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 'yes')
 else:
+    if os.environ.get('CORS_ALLOW_ALL_ORIGINS', '').lower() in ('true', '1', 'yes'):
+        raise ImproperlyConfigured(
+            "CRITICAL: Setting CORS_ALLOW_ALL_ORIGINS=True is strictly forbidden in production (DEBUG=False)."
+        )
     CORS_ALLOW_ALL_ORIGINS = False
 
-cors_origins_env = os.environ.get('CORS_ALLOWED_ORIGINS', '')
+cors_origins_env = os.environ.get('CORS_ALLOWED_ORIGINS', '').strip()
 if cors_origins_env:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in cors_origins_env.split(',') if o.strip()]
 elif not CORS_ALLOW_ALL_ORIGINS:
-    # Default local ports if origins not explicitly specified
+    # Default explicit origins for local container and dev setups
     CORS_ALLOWED_ORIGINS = [
         'http://localhost:5173',
         'http://127.0.0.1:5173',

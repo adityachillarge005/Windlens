@@ -8,10 +8,10 @@
 
 In Great Britain's wholesale electricity market, renewable generation—predominantly offshore and onshore wind—is inherently weather-dependent and volatile. Electricity procurement teams at UK utilities purchase power in day-ahead auctions (such as EPEX SPOT and Nord Pool) to cover expected customer demand.
 
-When procuring power, trading desks must evaluate wind generation forecasts **available before the day-ahead auction gate closure** (typically 11:00 or 12:00 GMT on the day prior to delivery, $D-1$). 
+When procuring power, trading desks must evaluate wind generation forecasts **available before their day-ahead procurement decision cutoff** (configurable, modeled by default as 11:00 London time on the day prior to delivery, $D-1$). 
 
 Key commercial challenges:
-1. **Look-Ahead Bias Risk**: Evaluating forecast accuracy using forecasts published *after* the auction gate closure distorts procurement strategies because those predictions were inaccessible when financial commitments were made.
+1. **Look-Ahead Bias Risk**: Evaluating forecast accuracy using forecasts published *after* the day-ahead procurement cutoff distorts procurement strategies because those predictions were inaccessible when financial commitments were made.
 2. **Imbalance Cost Exposure**:
    - **Over-forecasting ($F > A$)**: The utility contracts excess energy day-ahead and must spill or resell volume at potentially discounted intraday or cash-out prices.
    - **Under-forecasting ($F < A$)**: The utility is caught short and exposed to volatile cash-out / System Buy Prices in the Balancing Mechanism.
@@ -19,7 +19,7 @@ Key commercial challenges:
 
 **WindLens** solves this by providing:
 - Strict day-ahead decision cutoff filtering to isolate eligible forecasts with **zero look-ahead bias**.
-- Direct comparison between decision-time predictions, latest available gate predictions, and metered actual generation.
+- Direct comparison between decision-time predictions, latest available pre-delivery predictions, and metered actual generation.
 - Rigorous statistical error metrics (MAE, RMSE, Mean Forecast Bias, WAPE).
 - Granular forecast revision tracking and complete transparency into Elexon BMRS data quality.
 
@@ -28,7 +28,7 @@ Key commercial challenges:
 ## 2. Key Features
 
 - **Decision-Time Forecast Isolation**: Configurable day-ahead procurement cutoff (default: `11:00` Europe/London on $D-1$; configurable to `12:00`, `14:00`, `17:00`). Forecasts published after the cutoff are strictly segregated.
-- **Forecast vs. Actual Time-Series Monitor**: Interactive multi-line visualizer comparing decision-time forecasts, latest gate forecasts, and actual metered outturns across January 2026.
+- **Forecast vs. Actual Time-Series Monitor**: Interactive multi-line visualizer comparing decision-time forecasts, latest pre-delivery forecasts, and actual metered outturns across January 2026.
 - **Comprehensive KPI Dashboard**:
   - **MAE (Mean Absolute Error)**: Average deviation magnitude in MW.
   - **RMSE (Root Mean Squared Error)**: Sensitivity to extreme deviations in MW.
@@ -172,8 +172,8 @@ The day-ahead wholesale electricity procurement decision occurs on **$D-1$** (th
 For any delivery interval with target timestamp $T$ on delivery day $D$ (in `Europe/London`):
 $$\text{Cutoff}(T) = (D - 1\text{ day}) \text{ at } [H_{\text{cutoff}}] \text{ Europe/London}$$
 
-- **Default Assumption**: **11:00 London time on $D-1$** (representing typical GB Day-Ahead wholesale power auction order book closure on EPEX SPOT / Nord Pool). This is an analytical decision cutoff for the procurement desk, distinct from statutory BSC Balancing Mechanism Gate Closure which occurs 1 hour before delivery.
-- **Configurability**: Operators can adjust this to 12:00 (Nord Pool gate), 14:00, or 17:00 via the UI dropdown.
+- **Default Assumption**: **11:00 London time on $D-1$**. This represents a configurable evaluation assumption for the procurement team's daily order deadline. It is strictly an analytical decision cutoff and must not be conflated with the statutory Balancing Mechanism Gate Closure (which occurs 1 hour prior to each half-hour delivery interval).
+- **Configurability**: Analysts can evaluate alternative cutoffs (12:00, 14:00, or 17:00 on $D-1$) via the UI dropdown to test sensitivity to different decision timelines.
 
 ### Look-Ahead Bias Mitigation:
 1. For interval $T$, candidate forecast publications are filtered such that:
@@ -365,7 +365,7 @@ In accordance with hiring challenge guidelines, AI tools (Google Antigravity age
 
 ## 18. Assumptions & Future Improvements
 
-- **EPEX SPOT Day-Ahead Auction Default**: The default decision cutoff is assumed to be 11:00 Europe/London on $D-1$. The application supports dynamic selection between 11:00, 12:00, 14:00, and 17:00.
+- **Day-Ahead Procurement Cutoff Assumption**: The default decision cutoff is assumed to be 11:00 Europe/London on $D-1$ as a configurable analytical baseline. The application supports dynamic selection between 11:00, 12:00, 14:00, and 17:00.
 - **Hourly Averaged Outturn Aggregation (Default)**: WINDFOR provides 1-hour average power forecasts (MW). FUELHH provides 30-minute settlement period outturns (MW). When evaluating in `exact_hourly` resolution, true hourly outturn is computed by averaging both constituent half-hour settlement periods:
   $$\text{Actual}_{\text{Hour}} = \frac{\text{Actual}_{:00} + \text{Actual}_{:30}}{2.0}$$
   All 744 hours in January 2026 have 100% complete half-hourly readings.
